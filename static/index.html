@@ -4,11 +4,9 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>DERMS Prototype — Varanasi Pilot</title>
-<script src="https://unpkg.com/react@18/umd/react.development.js"></script>
-<script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
-<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-<script src="https://unpkg.com/prop-types@15.8.1/prop-types.min.js"></script>
-<script src="https://unpkg.com/recharts@2.12.7/umd/Recharts.js"></script>
+<script src="https://unpkg.com/react@18.2.0/umd/react.production.min.js"></script>
+<script src="https://unpkg.com/react-dom@18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone@7.23.6/babel.min.js"></script>
 <style>
 :root {
   --bg: #0B1121; --bg-card: #151F32; --bg-hover: #1E2D47;
@@ -128,7 +126,86 @@ tr:hover td { background: var(--bg-hover); }
 
 <script type="text/babel">
 const { useState, useEffect, useCallback, useRef } = React;
-const { AreaChart, Area, LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } = Recharts;
+// ─── Pure SVG Chart Components (no external lib) ──────────────────────────────
+function SvgLineChart({ data, lines, height = 200 }) {
+  if (!data || data.length === 0) return null;
+  const W = 600, H = height, PL = 36, PR = 8, PT = 8, PB = 28;
+  const cw = W - PL - PR, ch = H - PT - PB;
+  const allVals = lines.flatMap(l => data.map(d => d[l.key] ?? null).filter(v => v !== null));
+  const minV = 0, maxV = Math.max(...allVals, 1);
+  const xs = i => PL + (i / (data.length - 1)) * cw;
+  const ys = v => PT + ch - ((v - minV) / (maxV - minV)) * ch;
+  const labelEvery = Math.ceil(data.length / 8);
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height }} preserveAspectRatio="none">
+      {[0,0.25,0.5,0.75,1].map(t => (
+        <line key={t} x1={PL} x2={W-PR} y1={PT + ch*t} y2={PT + ch*t} stroke="#2A3A52" strokeDasharray="3 3" />
+      ))}
+      {data.map((d, i) => i % labelEvery === 0 && (
+        <text key={i} x={xs(i)} y={H-8} textAnchor="middle" fontSize={9} fill="#8B9CB8">{d.label || d.time || d.hour || ""}</text>
+      ))}
+      {[0,0.5,1].map(t => (
+        <text key={t} x={PL-4} y={ys(minV + (maxV-minV)*( 1-t))+4} textAnchor="end" fontSize={9} fill="#8B9CB8">{Math.round(minV+(maxV-minV)*t)}</text>
+      ))}
+      {lines.map(l => {
+        const pts = data.map((d, i) => d[l.key] != null ? `${xs(i)},${ys(d[l.key])}` : null).filter(Boolean);
+        if (l.fill) {
+          const first = data.findIndex(d => d[l.key] != null);
+          const last = data.map((d,i)=>d[l.key]!=null?i:-1).filter(v=>v>=0).pop();
+          const area = `M${xs(first)},${PT+ch} ` + pts.join(" L") + ` L${xs(last)},${PT+ch} Z`;
+          return <g key={l.key}><path d={area} fill={l.fill} opacity={0.18} /><polyline points={pts.join(" ")} fill="none" stroke={l.color} strokeWidth={2} strokeDasharray={l.dash||""} /></g>;
+        }
+        return <polyline key={l.key} points={pts.join(" ")} fill="none" stroke={l.color} strokeWidth={l.width||1.5} strokeDasharray={l.dash||""} />;
+      })}
+      {lines.map((l, li) => (
+        <g key={l.key} transform={`translate(${PL + li*110},${H-2})`}>
+          <line x1={0} y1={-6} x2={16} y2={-6} stroke={l.color} strokeWidth={2} strokeDasharray={l.dash||""} />
+          <text x={20} y={-3} fontSize={9} fill="#8B9CB8">{l.label}</text>
+        </g>
+      ))}
+    </svg>
+  );
+}
+
+function SvgBarChart({ data, bars, height = 200 }) {
+  if (!data || data.length === 0) return null;
+  const W = 600, H = height, PL = 36, PR = 8, PT = 8, PB = 36;
+  const cw = W - PL - PR, ch = H - PT - PB;
+  const allVals = bars.flatMap(b => data.map(d => d[b.key] ?? 0));
+  const maxV = Math.max(...allVals, 1);
+  const bw = (cw / data.length) * 0.8 / bars.length;
+  const gap = (cw / data.length) * 0.2;
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height }} preserveAspectRatio="none">
+      {[0,0.25,0.5,0.75,1].map(t => (
+        <line key={t} x1={PL} x2={W-PR} y1={PT+ch*t} y2={PT+ch*t} stroke="#2A3A52" strokeDasharray="3 3" />
+      ))}
+      {data.map((d, i) => {
+        const gx = PL + gap/2 + i * (cw/data.length);
+        return (
+          <g key={i}>
+            {bars.map((b, bi) => {
+              const val = d[b.key] ?? 0;
+              const bh = (val/maxV)*ch;
+              return <rect key={b.key} x={gx+bi*bw} y={PT+ch-bh} width={bw} height={bh} fill={b.color} rx={2} />;
+            })}
+            <text x={gx+(bw*bars.length/2)} y={H-20} textAnchor="middle" fontSize={8} fill="#8B9CB8" transform={`rotate(-30,${gx+(bw*bars.length/2)},${H-20})`}>{d.name||d.label||""}</text>
+          </g>
+        );
+      })}
+      {[0,0.5,1].map(t => (
+        <text key={t} x={PL-4} y={ys2(maxV*t,ch,PT)+4} textAnchor="end" fontSize={9} fill="#8B9CB8">{Math.round(maxV*t)}</text>
+      ))}
+      {bars.map((b, bi) => (
+        <g key={b.key} transform={`translate(${PL+bi*110},${H-4})`}>
+          <rect x={0} y={-10} width={12} height={8} fill={b.color} rx={2}/>
+          <text x={16} y={-3} fontSize={9} fill="#8B9CB8">{b.label}</text>
+        </g>
+      ))}
+    </svg>
+  );
+}
+function ys2(v, ch, PT, maxV=100) { return PT + ch - (v/maxV)*ch; }
 
 const API = ""; // Same-origin
 
@@ -304,18 +381,15 @@ function DashboardScreen({ summary, genProfile, ders }) {
         <div className="card">
           <div className="card-title">📈 24-Hour Generation Profile</div>
           {genProfile && genProfile.data && (
-            <ResponsiveContainer width="100%" height={200}>
-              <AreaChart data={genProfile.data.slice(-48)}>
-                <CartesianGrid strokeDasharray="3 3" stroke="rgba(42,58,82,0.5)" />
-                <XAxis dataKey="time" tick={{ fill: "#8B9CB8", fontSize: 10 }} interval={7} />
-                <YAxis tick={{ fill: "#8B9CB8", fontSize: 10 }} />
-                <Tooltip contentStyle={{ background: "#151F32", border: "1px solid #2A3A52", borderRadius: 6, fontSize: 11 }} />
-                <Legend wrapperStyle={{ fontSize: 11 }} />
-                <Area type="monotone" dataKey="solar_kw" name="Solar" stroke="#FCD34D" fill="rgba(252,211,77,0.15)" strokeWidth={2} />
-                <Area type="monotone" dataKey="load_kw" name="Load" stroke="#60A5FA" fill="rgba(96,165,250,0.1)" strokeWidth={1} strokeDasharray="5 5" />
-                <Line type="monotone" dataKey="clear_sky_kw" name="Clear Sky" stroke="#8B9CB8" strokeWidth={1} dot={false} strokeDasharray="3 3" />
-              </AreaChart>
-            </ResponsiveContainer>
+            <SvgLineChart
+              data={genProfile.data.slice(-48).map(d => ({ ...d, label: d.time }))}
+              lines={[
+                { key: "solar_kw", label: "Solar kW", color: "#FCD34D", fill: "#FCD34D" },
+                { key: "load_kw",  label: "Load kW",  color: "#60A5FA", dash: "5 5" },
+                { key: "clear_sky_kw", label: "Clear Sky", color: "#8B9CB8", dash: "3 3" },
+              ]}
+              height={200}
+            />
           )}
         </div>
         <div className="card">
@@ -1131,17 +1205,14 @@ function AnalyticsScreen({ ders, genProfile }) {
       <div className="row row-2">
         <div className="card">
           <div className="card-title">📈 Solar Generation Forecast vs Actual (24h)</div>
-          <Recharts.ResponsiveContainer width="100%" height={220}>
-            <Recharts.ComposedChart data={forecast} margin={{ top: 5, right: 10, bottom: 5, left: 0 }}>
-              <Recharts.CartesianGrid strokeDasharray="3 3" stroke="#2A3A52" />
-              <Recharts.XAxis dataKey="hour" tick={{ fontSize: 9, fill: "#8B9CB8" }} interval={3} />
-              <Recharts.YAxis tick={{ fontSize: 9, fill: "#8B9CB8" }} unit="kW" />
-              <Recharts.Tooltip contentStyle={{ background: "#151F32", border: "1px solid #2A3A52", fontSize: 11 }} />
-              <Recharts.Legend wrapperStyle={{ fontSize: 11 }} />
-              <Recharts.Area type="monotone" dataKey="forecast" fill="#1A3A5C" stroke="var(--cyan)" name="ML Forecast" strokeDasharray="4 2" />
-              <Recharts.Line type="monotone" dataKey="actual" stroke="var(--solar)" dot={false} name="Actual" strokeWidth={2} />
-            </Recharts.ComposedChart>
-          </Recharts.ResponsiveContainer>
+          <SvgLineChart
+            data={forecast}
+            lines={[
+              { key: "forecast", label: "ML Forecast", color: "#06B6D4", fill: "#06B6D4", dash: "4 2" },
+              { key: "actual",   label: "Actual",      color: "#FCD34D", width: 2 },
+            ]}
+            height={220}
+          />
           <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 6, display: "flex", gap: 16 }}>
             <span>Model: LSTM + weather API</span>
             <span>MAPE: 4.2%</span>
@@ -1183,17 +1254,14 @@ function AnalyticsScreen({ ders, genProfile }) {
 
       <div className="card">
         <div className="card-title">📊 DER Performance Analysis (CUF & PR)</div>
-        <Recharts.ResponsiveContainer width="100%" height={200}>
-          <Recharts.BarChart data={perfData} margin={{ top: 5, right: 10, bottom: 20, left: 0 }}>
-            <Recharts.CartesianGrid strokeDasharray="3 3" stroke="#2A3A52" />
-            <Recharts.XAxis dataKey="name" tick={{ fontSize: 9, fill: "#8B9CB8" }} angle={-30} textAnchor="end" />
-            <Recharts.YAxis tick={{ fontSize: 9, fill: "#8B9CB8" }} unit="%" />
-            <Recharts.Tooltip contentStyle={{ background: "#151F32", border: "1px solid #2A3A52", fontSize: 11 }} />
-            <Recharts.Legend wrapperStyle={{ fontSize: 11 }} />
-            <Recharts.Bar dataKey="cuf" name="CUF %" fill="var(--solar)" radius={[3,3,0,0]} />
-            <Recharts.Bar dataKey="pr" name="PR %" fill="var(--cyan)" radius={[3,3,0,0]} />
-          </Recharts.BarChart>
-        </Recharts.ResponsiveContainer>
+        <SvgBarChart
+          data={perfData}
+          bars={[
+            { key: "cuf", label: "CUF %", color: "#FCD34D" },
+            { key: "pr",  label: "PR %",  color: "#06B6D4" },
+          ]}
+          height={200}
+        />
       </div>
     </div>
   );
