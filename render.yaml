@@ -1,0 +1,10 @@
+services:
+  - type: web
+    name: derms-varanasi
+    runtime: docker
+    plan: free
+    region: singapore
+    healthCheckPath: /health
+    envVars:
+      - key: PORT
+        value: 8080

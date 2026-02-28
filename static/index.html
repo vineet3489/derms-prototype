@@ -1,0 +1,1321 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DERMS Prototype — Varanasi Pilot</title>
+<script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<script src="https://unpkg.com/prop-types@15.8.1/prop-types.min.js"></script>
+<script src="https://unpkg.com/recharts@2.12.7/umd/Recharts.js"></script>
+<style>
+:root {
+  --bg: #0B1121; --bg-card: #151F32; --bg-hover: #1E2D47;
+  --primary: #0A2540; --secondary: #1A4B6E; --accent: #F7B32B;
+  --success: #10B981; --warning: #F59E0B; --danger: #EF4444;
+  --solar: #FCD34D; --grid: #60A5FA; --purple: #8B5CF6; --cyan: #06B6D4;
+  --text: #F1F5F9; --text-muted: #8B9CB8; --border: #2A3A52; --p2p: #14B8A6;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { background: var(--bg); color: var(--text); font-family: 'Segoe UI', sans-serif; font-size: 14px; }
+.app { display: flex; height: 100vh; overflow: hidden; }
+/* Sidebar */
+.sidebar { width: 220px; background: var(--primary); border-right: 1px solid var(--border); display: flex; flex-direction: column; flex-shrink: 0; }
+.sidebar-logo { padding: 18px 16px; border-bottom: 1px solid var(--border); }
+.logo-text { font-size: 16px; font-weight: 700; color: var(--accent); }
+.logo-sub { font-size: 10px; color: var(--text-muted); margin-top: 2px; }
+.nav { padding: 8px 0; flex: 1; }
+.nav-item { display: flex; align-items: center; gap: 10px; padding: 10px 16px; cursor: pointer; color: var(--text-muted); transition: all 0.15s; font-size: 13px; border-left: 3px solid transparent; }
+.nav-item:hover { background: var(--bg-hover); color: var(--text); }
+.nav-item.active { background: var(--bg-hover); color: var(--accent); border-left-color: var(--accent); }
+.nav-badge { background: var(--danger); color: #fff; font-size: 10px; padding: 1px 5px; border-radius: 10px; margin-left: auto; }
+.sidebar-footer { padding: 12px 16px; border-top: 1px solid var(--border); font-size: 11px; color: var(--text-muted); }
+.status-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--success); display: inline-block; margin-right: 6px; animation: pulse 2s infinite; }
+@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
+/* Main */
+.main { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+.header { background: var(--bg-card); border-bottom: 1px solid var(--border); padding: 12px 24px; display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }
+.header-title { font-size: 16px; font-weight: 600; }
+.header-sub { font-size: 12px; color: var(--text-muted); margin-top: 2px; }
+.header-right { display: flex; align-items: center; gap: 16px; }
+.badge-pills { display: flex; gap: 8px; }
+.pill { background: var(--bg); border: 1px solid var(--border); border-radius: 20px; padding: 4px 12px; font-size: 11px; display: flex; align-items: center; gap: 6px; }
+.pill.green { border-color: var(--success); color: var(--success); }
+.pill.amber { border-color: var(--warning); color: var(--warning); }
+.content { flex: 1; overflow-y: auto; padding: 20px 24px; }
+/* Cards */
+.card { background: var(--bg-card); border: 1px solid var(--border); border-radius: 10px; padding: 16px; }
+.card-title { font-size: 12px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 12px; display: flex; align-items: center; gap: 8px; }
+/* KPI Grid */
+.kpi-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 12px; margin-bottom: 20px; }
+.kpi-card { background: var(--bg-card); border: 1px solid var(--border); border-radius: 10px; padding: 14px; }
+.kpi-label { font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.4px; }
+.kpi-value { font-size: 28px; font-weight: 700; margin: 4px 0; }
+.kpi-sub { font-size: 11px; color: var(--text-muted); }
+.kpi-icon { font-size: 20px; float: right; margin-top: -24px; }
+/* Grid layout */
+.row { display: grid; gap: 16px; margin-bottom: 16px; }
+.row-2 { grid-template-columns: 1fr 1fr; }
+.row-3 { grid-template-columns: 2fr 1fr; }
+.row-4 { grid-template-columns: 3fr 2fr; }
+/* Tables */
+table { width: 100%; border-collapse: collapse; font-size: 12px; }
+th { text-align: left; padding: 8px 10px; color: var(--text-muted); font-weight: 600; text-transform: uppercase; font-size: 10px; letter-spacing: 0.4px; border-bottom: 1px solid var(--border); }
+td { padding: 8px 10px; border-bottom: 1px solid rgba(42,58,82,0.5); }
+tr:hover td { background: var(--bg-hover); }
+/* Status Badges */
+.badge { display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 12px; font-size: 10px; font-weight: 600; }
+.badge-online { background: rgba(16,185,129,0.15); color: var(--success); border: 1px solid rgba(16,185,129,0.3); }
+.badge-offline { background: rgba(239,68,68,0.15); color: var(--danger); border: 1px solid rgba(239,68,68,0.3); }
+.badge-degraded { background: rgba(245,158,11,0.15); color: var(--warning); border: 1px solid rgba(245,158,11,0.3); }
+.badge-curtailed { background: rgba(139,92,246,0.15); color: var(--purple); border: 1px solid rgba(139,92,246,0.3); }
+.badge-warning { background: rgba(245,158,11,0.15); color: var(--warning); }
+.badge-critical { background: rgba(239,68,68,0.15); color: var(--danger); }
+.badge-info { background: rgba(96,165,250,0.15); color: var(--grid); }
+/* Alert items */
+.alert-item { display: flex; gap: 10px; padding: 8px 0; border-bottom: 1px solid rgba(42,58,82,0.5); font-size: 12px; }
+.alert-dot { width: 6px; height: 6px; border-radius: 50%; margin-top: 4px; flex-shrink: 0; }
+.alert-dot.critical { background: var(--danger); }
+.alert-dot.warning { background: var(--warning); }
+.alert-dot.info { background: var(--grid); }
+.alert-msg { flex: 1; color: var(--text); }
+.alert-time { color: var(--text-muted); font-size: 10px; white-space: nowrap; }
+/* Feeder bars */
+.feeder-bar { margin-bottom: 10px; }
+.feeder-bar-label { display: flex; justify-content: space-between; font-size: 11px; margin-bottom: 4px; }
+.feeder-bar-track { height: 8px; background: var(--bg); border-radius: 4px; overflow: hidden; }
+.feeder-bar-fill { height: 100%; border-radius: 4px; transition: width 0.3s; }
+/* Integration status */
+.int-status { display: flex; align-items: center; gap: 8px; padding: 8px 0; border-bottom: 1px solid rgba(42,58,82,0.3); font-size: 12px; }
+.int-icon { font-size: 18px; }
+.int-info { flex: 1; }
+.int-name { font-weight: 600; }
+.int-detail { font-size: 10px; color: var(--text-muted); }
+/* Charts */
+.recharts-tooltip-wrapper .recharts-default-tooltip { background: var(--bg-card) !important; border: 1px solid var(--border) !important; border-radius: 8px; }
+/* Map placeholder */
+.map-placeholder { background: linear-gradient(135deg, #0d1a2e 0%, #0a2540 100%); border-radius: 8px; position: relative; overflow: hidden; }
+.map-grid { position: absolute; top: 0; left: 0; right: 0; bottom: 0; opacity: 0.1; background-image: linear-gradient(rgba(96,165,250,0.5) 1px, transparent 1px), linear-gradient(90deg, rgba(96,165,250,0.5) 1px, transparent 1px); background-size: 30px 30px; }
+.der-marker { position: absolute; width: 12px; height: 12px; border-radius: 50%; transform: translate(-50%, -50%); cursor: pointer; }
+.der-marker.online { background: var(--success); box-shadow: 0 0 8px var(--success); animation: glow 2s infinite; }
+.der-marker.offline { background: var(--danger); }
+.der-marker.curtailed { background: var(--purple); }
+@keyframes glow { 0%,100%{box-shadow:0 0 6px var(--success)} 50%{box-shadow:0 0 14px var(--success)} }
+.feeder-line { position: absolute; background: var(--cyan); height: 2px; opacity: 0.5; transform-origin: left center; }
+/* Voltage gauge */
+.voltage-cell { font-weight: 600; }
+.v-ok { color: var(--success); }
+.v-warn { color: var(--warning); }
+.v-crit { color: var(--danger); }
+/* Tabs */
+.tabs { display: flex; gap: 4px; margin-bottom: 16px; background: var(--bg-card); border-radius: 8px; padding: 4px; border: 1px solid var(--border); width: fit-content; }
+.tab { padding: 6px 14px; border-radius: 6px; cursor: pointer; font-size: 12px; color: var(--text-muted); transition: all 0.15s; }
+.tab.active { background: var(--secondary); color: var(--text); }
+/* DR */
+.dr-progress-ring { position: relative; display: inline-flex; align-items: center; justify-content: center; }
+.dr-progress-ring svg { transform: rotate(-90deg); }
+.dr-center { position: absolute; text-align: center; }
+/* Scroll */
+::-webkit-scrollbar { width: 6px; } ::-webkit-scrollbar-track { background: transparent; } ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+/* Tag */
+.tag { display: inline-block; padding: 1px 6px; border-radius: 4px; font-size: 10px; background: var(--bg-hover); color: var(--text-muted); margin: 1px; }
+.loading { text-align: center; padding: 40px; color: var(--text-muted); }
+</style>
+</head>
+<body>
+<div id="root"><div style="color:#F7B32B;font-family:sans-serif;padding:40px;font-size:18px;">⏳ Loading DERMS UI… (if this persists, check browser console for errors)</div></div>
+
+<script type="text/babel">
+const { useState, useEffect, useCallback, useRef } = React;
+const { AreaChart, Area, LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } = Recharts;
+
+const API = ""; // Same-origin
+
+// ─── API Helpers ──────────────────────────────────────────────────────────────
+async function apiFetch(path) {
+  try {
+    const r = await fetch(API + path);
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    return await r.json();
+  } catch (e) { console.warn(`API ${path}:`, e.message); return null; }
+}
+
+// ─── Reusable Components ─────────────────────────────────────────────────────
+
+function Badge({ status }) {
+  const cls = { Online: "badge-online", Offline: "badge-offline", Degraded: "badge-degraded",
+    Curtailed: "badge-curtailed", Warning: "badge-warning", Normal: "badge-online",
+    Critical: "badge-critical" };
+  return <span className={`badge ${cls[status] || "badge-info"}`}>{status}</span>;
+}
+
+function KpiCard({ label, value, unit, sub, color = "var(--accent)", icon }) {
+  return (
+    <div className="kpi-card">
+      <div className="kpi-label">{label}</div>
+      {icon && <span className="kpi-icon">{icon}</span>}
+      <div className="kpi-value" style={{ color }}>{value}<span style={{ fontSize: 14, color: "var(--text-muted)", marginLeft: 4 }}>{unit}</span></div>
+      {sub && <div className="kpi-sub">{sub}</div>}
+    </div>
+  );
+}
+
+function AlertsList({ alerts }) {
+  if (!alerts || !alerts.length) return <div className="loading">No alerts</div>;
+  return alerts.slice(0, 8).map((a, i) => (
+    <div key={i} className="alert-item">
+      <div className={`alert-dot ${a.alert_type}`}></div>
+      <div className="alert-msg">{a.message}</div>
+      <div className="alert-time">{a.priority} · {new Date(a.created_at).toLocaleTimeString()}</div>
+    </div>
+  ));
+}
+
+function FeederBar({ feeder }) {
+  const used = feeder.used_capacity_kw || 0;
+  const total = feeder.hosting_capacity_kw || 1;
+  const pct = Math.min(100, (used / total) * 100);
+  const loading = feeder.current_loading_pct || 0;
+  const color = loading > 80 ? "var(--danger)" : loading > 60 ? "var(--warning)" : "var(--success)";
+  const hcColor = pct > 85 ? "var(--danger)" : pct > 60 ? "var(--warning)" : "var(--cyan)";
+  return (
+    <div className="feeder-bar">
+      <div className="feeder-bar-label">
+        <span>{feeder.name || feeder.feeder_id}</span>
+        <span style={{ color }}>{loading.toFixed(1)}% load | <span style={{ color: hcColor }}>{pct.toFixed(0)}% HC</span></span>
+      </div>
+      <div className="feeder-bar-track">
+        <div className="feeder-bar-fill" style={{ width: `${loading}%`, background: color }}></div>
+      </div>
+    </div>
+  );
+}
+
+// ─── GIS Map Component ────────────────────────────────────────────────────────
+
+function GISMap({ ders, dts, feeders }) {
+  const mapRef = useRef(null);
+  const [tooltip, setTooltip] = useState(null);
+
+  // Project lat/lng to map pixels [0-100%]
+  const latRange = [25.25, 25.40];
+  const lngRange = [82.93, 83.06];
+  const project = (lat, lng) => ({
+    x: ((lng - lngRange[0]) / (lngRange[1] - lngRange[0])) * 100,
+    y: ((latRange[1] - lat) / (latRange[1] - latRange[0])) * 100,
+  });
+
+  // Feeder colors
+  const fColors = { "FDR-01": "#06B6D4", "FDR-02": "#8B5CF6", "FDR-03": "#F59E0B" };
+
+  return (
+    <div className="map-placeholder" style={{ height: "100%", minHeight: 280 }}>
+      <div className="map-grid"></div>
+      {/* DT markers */}
+      {(dts || []).map(dt => {
+        const pos = project(dt.lat, dt.lng);
+        const loading = dt.current_loading_pct || dt.loading_pct || 0;
+        const color = loading > 80 ? "#EF4444" : loading > 60 ? "#F59E0B" : "#60A5FA";
+        return (
+          <div key={dt.dt_id}
+            style={{ position: "absolute", left: `${pos.x}%`, top: `${pos.y}%`, transform: "translate(-50%,-50%)" }}
+            onMouseEnter={() => setTooltip({ ...dt, type: "dt", x: pos.x, y: pos.y })}
+            onMouseLeave={() => setTooltip(null)}>
+            <div style={{ width: 14, height: 14, background: color, borderRadius: 3, border: "1px solid rgba(255,255,255,0.3)", cursor: "pointer" }}></div>
+          </div>
+        );
+      })}
+      {/* DER markers */}
+      {(ders || []).map((der, i) => {
+        const pos = project(der.lat, der.lng);
+        const statusClass = der.status === "Online" ? "online" : der.status === "Curtailed" ? "curtailed" : "offline";
+        return (
+          <div key={der.der_id}
+            className={`der-marker ${statusClass}`}
+            style={{ left: `${pos.x}%`, top: `${pos.y}%` }}
+            onMouseEnter={() => setTooltip({ ...der, type: "der", x: pos.x, y: pos.y })}
+            onMouseLeave={() => setTooltip(null)}>
+          </div>
+        );
+      })}
+      {/* Tooltip */}
+      {tooltip && (
+        <div style={{ position: "absolute", left: `${Math.min(80, tooltip.x + 2)}%`, top: `${Math.max(5, tooltip.y - 10)}%`,
+          background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: 6, padding: "8px 10px", fontSize: 11, zIndex: 10, pointerEvents: "none", maxWidth: 180 }}>
+          {tooltip.type === "der" ? (
+            <>
+              <div style={{ fontWeight: 600, marginBottom: 4 }}>{tooltip.der_id}</div>
+              <div>{tooltip.der_type} · {tooltip.nameplate_kw}kW</div>
+              <div>{tooltip.location_name}</div>
+              <div style={{ color: "var(--text-muted)" }}>Now: {(tooltip.current_kw || 0).toFixed(1)} kW</div>
+              <Badge status={tooltip.status} />
+            </>
+          ) : (
+            <>
+              <div style={{ fontWeight: 600, marginBottom: 4 }}>{tooltip.name}</div>
+              <div>Loading: {(tooltip.current_loading_pct || tooltip.loading_pct || 0).toFixed(1)}%</div>
+              <div>V-L1: {(tooltip.voltage_l1 || 230).toFixed(1)}V</div>
+            </>
+          )}
+        </div>
+      )}
+      {/* Legend */}
+      <div style={{ position: "absolute", bottom: 8, left: 8, background: "rgba(11,17,33,0.85)", border: "1px solid var(--border)", borderRadius: 6, padding: "6px 10px", fontSize: 10 }}>
+        <div>● Online DER &nbsp; ■ DT (green/amber/red by loading)</div>
+        <div style={{ color: "var(--text-muted)" }}>FDR-01: Sigra-Lanka · FDR-02: Bhelupur · FDR-03: Sarnath</div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Dashboard Screen ─────────────────────────────────────────────────────────
+
+function DashboardScreen({ summary, genProfile, ders }) {
+  if (!summary) return <div className="loading">Loading dashboard...</div>;
+  const { total_ders, online_ders, offline_ders, curtailed_ders, total_generation_kw,
+    total_capacity_kw, system_cuf_pct, active_alerts, feeders, recent_alerts,
+    adms_sync_status, ieee_aggregators_online, active_der_controls, distribution_transformers } = summary;
+
+  const cuf_display = total_capacity_kw > 0 ? system_cuf_pct : 0;
+
+  return (
+    <div>
+      <div className="kpi-grid">
+        <KpiCard label="Total Generation" value={(total_generation_kw || 0).toFixed(1)} unit="kW" sub={`of ${(total_capacity_kw || 0).toFixed(0)} kW installed`} color="var(--solar)" icon="☀️" />
+        <KpiCard label="DERs Online" value={online_ders || 0} sub={`${offline_ders || 0} offline · ${curtailed_ders || 0} curtailed`} color="var(--success)" icon="⚡" />
+        <KpiCard label="System CUF" value={cuf_display.toFixed(1)} unit="%" sub="Capacity Utilization Factor" color="var(--cyan)" icon="📊" />
+        <KpiCard label="IEEE 2030.5 Agg." value={ieee_aggregators_online || 0} sub="DER aggregators connected" color="var(--purple)" icon="🔌" />
+        <KpiCard label="Active Alerts" value={active_alerts || 0} sub={`${active_der_controls || 0} DERControls active`} color={(active_alerts || 0) > 0 ? "var(--danger)" : "var(--success)"} icon="🔔" />
+      </div>
+
+      <div className="row row-4" style={{ marginBottom: 16 }}>
+        <div className="card" style={{ minHeight: 300 }}>
+          <div className="card-title">🗺️ DER Fleet GIS View — Varanasi Pilot</div>
+          <GISMap ders={ders} dts={distribution_transformers} feeders={feeders} />
+        </div>
+        <div className="card">
+          <div className="card-title">🔔 Active Alerts</div>
+          <AlertsList alerts={recent_alerts} />
+        </div>
+      </div>
+
+      <div className="row row-3">
+        <div className="card">
+          <div className="card-title">📈 24-Hour Generation Profile</div>
+          {genProfile && genProfile.data && (
+            <ResponsiveContainer width="100%" height={200}>
+              <AreaChart data={genProfile.data.slice(-48)}>
+                <CartesianGrid strokeDasharray="3 3" stroke="rgba(42,58,82,0.5)" />
+                <XAxis dataKey="time" tick={{ fill: "#8B9CB8", fontSize: 10 }} interval={7} />
+                <YAxis tick={{ fill: "#8B9CB8", fontSize: 10 }} />
+                <Tooltip contentStyle={{ background: "#151F32", border: "1px solid #2A3A52", borderRadius: 6, fontSize: 11 }} />
+                <Legend wrapperStyle={{ fontSize: 11 }} />
+                <Area type="monotone" dataKey="solar_kw" name="Solar" stroke="#FCD34D" fill="rgba(252,211,77,0.15)" strokeWidth={2} />
+                <Area type="monotone" dataKey="load_kw" name="Load" stroke="#60A5FA" fill="rgba(96,165,250,0.1)" strokeWidth={1} strokeDasharray="5 5" />
+                <Line type="monotone" dataKey="clear_sky_kw" name="Clear Sky" stroke="#8B9CB8" strokeWidth={1} dot={false} strokeDasharray="3 3" />
+              </AreaChart>
+            </ResponsiveContainer>
+          )}
+        </div>
+        <div className="card">
+          <div className="card-title">⚡ Feeder Loading & Hosting Capacity</div>
+          {(feeders || []).map(f => <FeederBar key={f.feeder_id} feeder={f} />)}
+          <div style={{ marginTop: 12, fontSize: 11, color: "var(--text-muted)" }}>
+            <div style={{ marginBottom: 4 }}>🔗 ADMS Integration: <span style={{ color: adms_sync_status === "Connected" ? "var(--success)" : "var(--danger)" }}>{adms_sync_status}</span></div>
+            <div>Protocol: CIM XML (IEC 61970-452) + REST · GE ADMS Simulated</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── DER Fleet Screen ─────────────────────────────────────────────────────────
+
+function DERFleetScreen({ ders }) {
+  const [view, setView] = useState("table");
+  const [selected, setSelected] = useState(null);
+  const [filterFeeder, setFilterFeeder] = useState("All");
+  const [filterType, setFilterType] = useState("All");
+
+  const feeders = [...new Set((ders || []).map(d => d.feeder_id))];
+  const types = [...new Set((ders || []).map(d => d.der_type))];
+
+  const filtered = (ders || []).filter(d =>
+    (filterFeeder === "All" || d.feeder_id === filterFeeder) &&
+    (filterType === "All" || d.der_type === filterType)
+  );
+
+  const totalGen = filtered.reduce((s, d) => s + (d.current_kw > 0 ? d.current_kw : 0), 0);
+  const totalCap = filtered.reduce((s, d) => s + d.nameplate_kw, 0);
+  const avgPR = filtered.filter(d => d.pr_pct > 0).reduce((s, d) => s + d.pr_pct, 0) / (filtered.filter(d => d.pr_pct > 0).length || 1);
+
+  return (
+    <div>
+      <div className="kpi-grid" style={{ gridTemplateColumns: "repeat(4,1fr)" }}>
+        <KpiCard label="Registered DERs" value={filtered.length} sub={`${ders?.length} total`} icon="🔋" />
+        <KpiCard label="Online" value={filtered.filter(d => d.status === "Online").length} color="var(--success)" icon="✅" />
+        <KpiCard label="Generation" value={totalGen.toFixed(1)} unit="kW" sub={`of ${totalCap.toFixed(0)}kW capacity`} color="var(--solar)" icon="☀️" />
+        <KpiCard label="Avg Performance Ratio" value={avgPR.toFixed(1)} unit="%" color="var(--cyan)" icon="📊" />
+      </div>
+
+      <div style={{ display: "flex", gap: 12, marginBottom: 12, flexWrap: "wrap" }}>
+        <select value={filterFeeder} onChange={e => setFilterFeeder(e.target.value)} style={{ background: "var(--bg-card)", border: "1px solid var(--border)", color: "var(--text)", padding: "6px 10px", borderRadius: 6, fontSize: 12 }}>
+          <option value="All">All Feeders</option>
+          {feeders.map(f => <option key={f} value={f}>{f}</option>)}
+        </select>
+        <select value={filterType} onChange={e => setFilterType(e.target.value)} style={{ background: "var(--bg-card)", border: "1px solid var(--border)", color: "var(--text)", padding: "6px 10px", borderRadius: 6, fontSize: 12 }}>
+          <option value="All">All Types</option>
+          {types.map(t => <option key={t} value={t}>{t}</option>)}
+        </select>
+        <div className="tabs">
+          <div className={`tab ${view === "table" ? "active" : ""}`} onClick={() => setView("table")}>📋 Table</div>
+          <div className={`tab ${view === "map" ? "active" : ""}`} onClick={() => setView("map")}>🗺️ Map</div>
+        </div>
+      </div>
+
+      <div className="row" style={{ gridTemplateColumns: selected ? "1.5fr 1fr" : "1fr", marginBottom: 0 }}>
+        <div className="card" style={{ padding: 0 }}>
+          {view === "table" ? (
+            <table>
+              <thead><tr>
+                <th>DER ID</th><th>Type</th><th>Location</th><th>OEM</th>
+                <th>Capacity</th><th>Now</th><th>CUF%</th><th>Feeder</th><th>Status</th>
+              </tr></thead>
+              <tbody>
+                {filtered.map(d => (
+                  <tr key={d.der_id} onClick={() => setSelected(selected?.der_id === d.der_id ? null : d)} style={{ cursor: "pointer", background: selected?.der_id === d.der_id ? "var(--bg-hover)" : "" }}>
+                    <td style={{ fontSize: 11, fontFamily: "monospace" }}>{d.der_id}</td>
+                    <td><span className="tag">{d.der_type}</span></td>
+                    <td style={{ fontSize: 11 }}>{d.location_name}</td>
+                    <td style={{ fontSize: 11 }}>{d.inverter_oem}</td>
+                    <td>{d.nameplate_kw}kW</td>
+                    <td style={{ color: "var(--solar)", fontWeight: 600 }}>{(d.current_kw || 0).toFixed(1)}kW</td>
+                    <td>{(d.cuf_pct || 0).toFixed(1)}%</td>
+                    <td><span style={{ fontSize: 10, color: "var(--cyan)" }}>{d.feeder_id}</span></td>
+                    <td><Badge status={d.status} /></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          ) : (
+            <div style={{ height: 400, padding: 8 }}>
+              <GISMap ders={filtered} dts={[]} feeders={[]} />
+            </div>
+          )}
+        </div>
+
+        {selected && (
+          <div className="card">
+            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 12 }}>
+              <div style={{ fontWeight: 600, fontSize: 14 }}>{selected.der_id}</div>
+              <button onClick={() => setSelected(null)} style={{ background: "none", border: "none", color: "var(--text-muted)", cursor: "pointer", fontSize: 16 }}>✕</button>
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, fontSize: 12 }}>
+              {[["Type", selected.der_type], ["OEM", selected.inverter_oem], ["Capacity", `${selected.nameplate_kw}kW`],
+                ["Now", `${(selected.current_kw||0).toFixed(2)}kW`], ["CUF", `${(selected.cuf_pct||0).toFixed(1)}%`],
+                ["PR", `${(selected.pr_pct||0).toFixed(1)}%`], ["Feeder", selected.feeder_id], ["DT", selected.dt_id],
+                ["Consumer", selected.consumer_id], ["Meter", selected.meter_id],
+                ["Aggregator", selected.aggregator_id], ["Curtailment", `${selected.curtailment_pct||100}%`],
+              ].map(([k, v]) => (
+                <div key={k} style={{ background: "var(--bg)", borderRadius: 6, padding: "6px 8px" }}>
+                  <div style={{ color: "var(--text-muted)", fontSize: 10 }}>{k}</div>
+                  <div style={{ fontWeight: 600, fontSize: 12 }}>{v}</div>
+                </div>
+              ))}
+            </div>
+            {selected.soc_pct && (
+              <div style={{ marginTop: 12, padding: "8px", background: "var(--bg)", borderRadius: 6 }}>
+                <div style={{ fontSize: 11, color: "var(--text-muted)", marginBottom: 4 }}>BESS State of Charge</div>
+                <div style={{ height: 8, background: "rgba(42,58,82,0.5)", borderRadius: 4, overflow: "hidden" }}>
+                  <div style={{ height: "100%", width: `${selected.soc_pct}%`, background: selected.soc_pct > 50 ? "var(--success)" : "var(--warning)", borderRadius: 4 }}></div>
+                </div>
+                <div style={{ fontSize: 12, fontWeight: 600, marginTop: 4 }}>{selected.soc_pct.toFixed(0)}%</div>
+              </div>
+            )}
+            <div style={{ marginTop: 12, padding: "8px", background: "var(--bg)", borderRadius: 6, fontSize: 11 }}>
+              <div style={{ color: "var(--text-muted)", marginBottom: 4 }}>IEEE 2030.5 Connection</div>
+              <div>Aggregator: <span style={{ color: "var(--cyan)" }}>{selected.aggregator_id}</span></div>
+              <div>Protocol: SEP 2.0 · Function Set 10 (DER)</div>
+              <div>Last Update: {selected.last_update ? new Date(selected.last_update).toLocaleTimeString() : "—"}</div>
+            </div>
+            <Badge status={selected.status} />
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ─── ADMS Integration Screen ──────────────────────────────────────────────────
+
+function ADMSScreen() {
+  const [admsStatus, setAdmsStatus] = useState(null);
+  const [gridState, setGridState] = useState(null);
+  const [hc, setHC] = useState(null);
+
+  useEffect(() => {
+    apiFetch("/api/adms/status").then(setAdmsStatus);
+    apiFetch("/sim/adms/realtime/state").then(setGridState);
+    apiFetch("/api/adms/hosting-capacity").then(setHC);
+    const iv = setInterval(() => {
+      apiFetch("/sim/adms/realtime/state").then(setGridState);
+    }, 15000);
+    return () => clearInterval(iv);
+  }, []);
+
+  return (
+    <div>
+      <div className="kpi-grid" style={{ gridTemplateColumns: "repeat(4,1fr)" }}>
+        <KpiCard label="ADMS Type" value="GE ADMS" sub="Simulated (CIM16)" color="var(--cyan)" icon="🏭" />
+        <KpiCard label="Feeders" value={admsStatus?.derms_feeders || 0} sub="CIM topology loaded" icon="⚡" />
+        <KpiCard label="Dist. Transformers" value={admsStatus?.derms_dts || 0} sub="ADMS network model" icon="🔄" />
+        <KpiCard label="CIM Version" value="CIM16" sub="IEC 61970-452" color="var(--purple)" icon="📋" />
+      </div>
+
+      <div className="row row-2">
+        <div className="card">
+          <div className="card-title">🔗 Integration Architecture</div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {[
+              { icon: "🏭", name: "GE ADMS", detail: "IEC 61970-452 CIM XML (topology) + REST (real-time SCADA state)", status: "Connected" },
+              { icon: "📡", name: "IEC 61968 Message Bus", detail: "JMS/SOAP - Northbound operational messages to/from ADMS", status: "Simulated" },
+              { icon: "🔒", name: "mTLS Authentication", detail: "Mutual TLS · X.509 cert signing · VPN private network", status: "Prototype" },
+              { icon: "📊", name: "SCADA State", detail: "1-min poll cycle · Voltage, loading, switch status per feeder/DT", status: "Active" },
+              { icon: "↩️", name: "DER → ADMS Feedback", detail: "DERMS reports DER fleet status back for load flow model", status: "Active" },
+            ].map(i => (
+              <div key={i.name} className="int-status">
+                <span className="int-icon">{i.icon}</span>
+                <div className="int-info">
+                  <div className="int-name">{i.name}</div>
+                  <div className="int-detail">{i.detail}</div>
+                </div>
+                <span className={`badge badge-${i.status === "Connected" || i.status === "Active" ? "online" : i.status === "Simulated" ? "degraded" : "info"}`}>{i.status}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="card">
+          <div className="card-title">📊 Real-Time Grid State (ADMS SCADA)</div>
+          {gridState ? (
+            <>
+              <div style={{ fontSize: 11, color: "var(--text-muted)", marginBottom: 8 }}>
+                ☀️ Solar factor: {(gridState.solar_factor * 100).toFixed(0)}% ·
+                🔋 Load factor: {(gridState.load_factor * 100).toFixed(0)}%
+              </div>
+              <table>
+                <thead><tr><th>Feeder</th><th>Loading</th><th>Net Load</th><th>Solar Offset</th></tr></thead>
+                <tbody>
+                  {(gridState.feeders || []).map(f => (
+                    <tr key={f.feeder_id}>
+                      <td style={{ color: "var(--cyan)", fontSize: 11 }}>{f.feeder_id}</td>
+                      <td><span style={{ color: f.loading_pct > 80 ? "var(--danger)" : f.loading_pct > 60 ? "var(--warning)" : "var(--success)", fontWeight: 600 }}>{f.loading_pct}%</span></td>
+                      <td>{f.net_load_mw} MW</td>
+                      <td style={{ color: "var(--solar)" }}>-{f.solar_offset_mw} MW</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              <div style={{ marginTop: 12 }}>
+                <div className="card-title">DT Voltage Status</div>
+                <table>
+                  <thead><tr><th>DT</th><th>V-L1</th><th>V-L2</th><th>V-L3</th><th>Loading</th></tr></thead>
+                  <tbody>
+                    {(gridState.distribution_transformers || []).map(dt => {
+                      const vcls = v => v > 244 ? "v-crit" : v > 237 ? "v-warn" : v < 216 ? "v-crit" : v < 220 ? "v-warn" : "v-ok";
+                      return (
+                        <tr key={dt.dt_id}>
+                          <td style={{ fontSize: 10 }}>{dt.dt_id}</td>
+                          <td><span className={`voltage-cell ${vcls(dt.voltage_l1)}`}>{dt.voltage_l1}V</span></td>
+                          <td><span className={`voltage-cell ${vcls(dt.voltage_l2)}`}>{dt.voltage_l2}V</span></td>
+                          <td><span className={`voltage-cell ${vcls(dt.voltage_l3)}`}>{dt.voltage_l3}V</span></td>
+                          <td>{dt.loading_pct}%</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          ) : <div className="loading">Loading ADMS state...</div>}
+        </div>
+      </div>
+
+      {hc && (
+        <div className="card" style={{ marginTop: 0 }}>
+          <div className="card-title">🏠 Hosting Capacity (EPRI DRIVE Methodology)</div>
+          <table>
+            <thead><tr><th>DT</th><th>Feeder</th><th>HC Limit (kW)</th><th>Used (kW)</th><th>Available (kW)</th><th>Utilization</th><th>Status</th></tr></thead>
+            <tbody>
+              {(hc.hosting_capacity || []).map(item => {
+                const util = item.utilization_pct || 0;
+                const color = util > 85 ? "var(--danger)" : util > 60 ? "var(--warning)" : "var(--success)";
+                return (
+                  <tr key={item.dt_id}>
+                    <td style={{ fontSize: 11, fontFamily: "monospace" }}>{item.dt_id}</td>
+                    <td style={{ color: "var(--cyan)" }}>{item.feeder_id}</td>
+                    <td>{item.hosting_capacity_kw}</td>
+                    <td>{(item.used_capacity_kw || 0).toFixed(1)}</td>
+                    <td style={{ color: "var(--success)" }}>{(item.available_kw || item.hosting_capacity_kw).toFixed(1)}</td>
+                    <td>
+                      <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                        <div style={{ width: 60, height: 6, background: "var(--bg)", borderRadius: 3, overflow: "hidden" }}>
+                          <div style={{ height: "100%", width: `${Math.min(100, util)}%`, background: color, borderRadius: 3 }}></div>
+                        </div>
+                        <span style={{ color, fontSize: 11 }}>{util}%</span>
+                      </div>
+                    </td>
+                    <td><span style={{ fontSize: 10, color }}>{util > 85 ? "🔴 Full" : util > 60 ? "🟡 Warn" : "🟢 OK"}</span></td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Planning & Modelling Screen ──────────────────────────────────────────────
+
+function PlanningScreen({ ders, summary }) {
+  const [hc, setHc] = useState(null);
+  const [newDer, setNewDer] = useState({ type: "Solar PV", kw: 5, feeder_id: "FDR-01", dt_id: "DT-VAR-0234" });
+  const [impact, setImpact] = useState(null);
+
+  useEffect(() => {
+    apiFetch("/api/adms/hosting-capacity").then(setHc);
+  }, []);
+
+  const feeders = summary?.feeders || [];
+  const dts = summary?.distribution_transformers || [];
+
+  const simulateImpact = () => {
+    const dt = dts.find(d => d.dt_id === newDer.dt_id);
+    const feeder = feeders.find(f => f.feeder_id === newDer.feeder_id);
+    if (!dt || !feeder) return;
+    const hcEntry = hc?.hosting_capacity?.find(h => h.dt_id === newDer.dt_id);
+    const currentUsed = dt.used_capacity_kw || 0;
+    const newUsed = currentUsed + newDer.kw;
+    const hcKw = hcEntry?.hosting_capacity_kw || dt.hosting_capacity_kw || 0;
+    const voltageRise = (newDer.kw / (dt.rated_kva || 315)) * 5.2;
+    const feasible = newUsed <= hcKw;
+    setImpact({
+      dt_name: dt.name,
+      feeder_name: feeder.name,
+      hc_kw: hcKw,
+      current_used_kw: currentUsed,
+      new_used_kw: newUsed,
+      headroom_kw: hcKw - newUsed,
+      voltage_rise_v: voltageRise.toFixed(2),
+      feasible,
+      voltage_ok: voltageRise < 3.0,
+      thermal_ok: newUsed <= (hcEntry?.thermal_constraint_kw || hcKw),
+    });
+  };
+
+  const derTypeBreakdown = ders.reduce((acc, d) => {
+    acc[d.der_type] = (acc[d.der_type] || 0) + 1; return acc;
+  }, {});
+
+  return (
+    <div>
+      <div className="kpi-grid" style={{ gridTemplateColumns: "repeat(4,1fr)" }}>
+        <KpiCard label="Total DER Assets" value={ders.length} sub="Onboarded in network" icon="⚡" />
+        <KpiCard label="Total HC" value={((summary?.feeders||[]).reduce((s,f)=>s+f.hosting_capacity_kw,0)/1000).toFixed(1)+"MW"} sub="EPRI DRIVE methodology" color="var(--cyan)" icon="🏗️" />
+        <KpiCard label="HC Utilized" value={((summary?.feeders||[]).reduce((s,f)=>s+f.used_capacity_kw,0)).toFixed(0)+"kW"} sub="Across all feeders" color="var(--solar)" icon="📊" />
+        <KpiCard label="Feeders" value={(summary?.feeders||[]).length} sub="Active distribution feeders" color="var(--purple)" icon="🗺️" />
+      </div>
+
+      <div className="row row-2">
+        <div className="card">
+          <div className="card-title">🏗️ Hosting Capacity by Distribution Transformer</div>
+          <table>
+            <thead><tr><th>DT</th><th>Feeder</th><th>HC (kW)</th><th>Used (kW)</th><th>Headroom</th><th>Voltage Limit</th></tr></thead>
+            <tbody>
+              {(hc?.hosting_capacity || dts).map(h => {
+                const dt = dts.find(d => d.dt_id === (h.dt_id || h.dt_id));
+                const used = dt?.used_capacity_kw || 0;
+                const hcKw = h.hosting_capacity_kw;
+                const pct = hcKw > 0 ? Math.round(used / hcKw * 100) : 0;
+                return (
+                  <tr key={h.dt_id}>
+                    <td style={{ fontSize: 11 }}>{h.dt_id}</td>
+                    <td style={{ fontSize: 11 }}>{h.feeder_id}</td>
+                    <td style={{ fontWeight: 600, color: "var(--cyan)" }}>{hcKw}</td>
+                    <td>{used}</td>
+                    <td>
+                      <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                        <div style={{ flex: 1, height: 6, background: "var(--bg)", borderRadius: 3 }}>
+                          <div style={{ width: `${Math.min(100,pct)}%`, height: "100%", borderRadius: 3, background: pct > 80 ? "var(--danger)" : pct > 50 ? "var(--warning)" : "var(--success)" }} />
+                        </div>
+                        <span style={{ fontSize: 10, color: "var(--text-muted)" }}>{pct}%</span>
+                      </div>
+                    </td>
+                    <td style={{ fontSize: 11 }}>{h.voltage_constraint_kw || "—"}kW</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+
+        <div className="card">
+          <div className="card-title">🔬 DER Connection Impact Simulator</div>
+          <div style={{ display: "grid", gap: 8, marginBottom: 12 }}>
+            {[
+              { label: "DER Type", key: "type", type: "select", options: ["Solar PV", "BESS", "EV Charger"] },
+              { label: "Capacity (kW)", key: "kw", type: "number" },
+              { label: "Feeder", key: "feeder_id", type: "select", options: ["FDR-01","FDR-02","FDR-03"] },
+              { label: "Distribution Transformer", key: "dt_id", type: "select",
+                options: dts.filter(d => d.feeder_id === newDer.feeder_id).map(d => d.dt_id) },
+            ].map(f => (
+              <div key={f.key}>
+                <label style={{ fontSize: 11, color: "var(--text-muted)", display: "block", marginBottom: 2 }}>{f.label}</label>
+                {f.type === "select" ? (
+                  <select value={newDer[f.key]} onChange={e => setNewDer({...newDer, [f.key]: e.target.value})}
+                    style={{ width: "100%", background: "var(--bg)", border: "1px solid var(--border)", color: "var(--text)", padding: "4px 8px", borderRadius: 4, fontSize: 12 }}>
+                    {f.options.map(o => <option key={o} value={o}>{o}</option>)}
+                  </select>
+                ) : (
+                  <input type="number" value={newDer[f.key]} onChange={e => setNewDer({...newDer, [f.key]: +e.target.value})}
+                    style={{ width: "100%", background: "var(--bg)", border: "1px solid var(--border)", color: "var(--text)", padding: "4px 8px", borderRadius: 4, fontSize: 12 }} />
+                )}
+              </div>
+            ))}
+            <button onClick={simulateImpact} style={{ background: "var(--cyan)", color: "#000", border: "none", padding: "8px", borderRadius: 6, cursor: "pointer", fontWeight: 600, fontSize: 12 }}>
+              Simulate Connection Impact
+            </button>
+          </div>
+          {impact && (
+            <div style={{ background: "var(--bg)", borderRadius: 8, padding: 12, fontSize: 12 }}>
+              <div style={{ fontWeight: 600, marginBottom: 8, color: impact.feasible ? "var(--success)" : "var(--danger)" }}>
+                {impact.feasible ? "✅ Connection Feasible" : "❌ Hosting Capacity Exceeded"}
+              </div>
+              {[
+                ["DT", impact.dt_name],
+                ["HC Available", `${impact.hc_kw} kW`],
+                ["Current Load", `${impact.current_used_kw} kW`],
+                ["After Connection", `${impact.new_used_kw.toFixed(1)} kW`],
+                ["Headroom", `${impact.headroom_kw.toFixed(1)} kW`],
+                ["Est. Voltage Rise", `${impact.voltage_rise_v} V ${impact.voltage_ok ? "✅" : "⚠️ >3V limit"}`],
+                ["Thermal Check", impact.thermal_ok ? "✅ Pass" : "❌ Fail"],
+              ].map(([k,v]) => (
+                <div key={k} style={{ display: "flex", justifyContent: "space-between", borderBottom: "1px solid var(--border)", padding: "4px 0" }}>
+                  <span style={{ color: "var(--text-muted)" }}>{k}</span><span>{v}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+
+      <div className="card">
+        <div className="card-title">📦 Onboarded DER Asset Portfolio</div>
+        <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 12 }}>
+          {Object.entries(derTypeBreakdown).map(([type, count]) => (
+            <div key={type} style={{ background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 8, padding: "8px 16px", fontSize: 12 }}>
+              <span style={{ fontWeight: 600, color: "var(--solar)" }}>{count}</span> × {type}
+            </div>
+          ))}
+        </div>
+        <table>
+          <thead><tr><th>DER ID</th><th>Type</th><th>Capacity</th><th>Feeder</th><th>DT</th><th>Aggregator</th><th>Status</th></tr></thead>
+          <tbody>
+            {ders.slice(0,15).map(d => (
+              <tr key={d.der_id}>
+                <td style={{ fontFamily: "monospace", fontSize: 10 }}>{d.der_id}</td>
+                <td><span className="tag">{d.der_type}</span></td>
+                <td>{d.nameplate_kw} kW</td>
+                <td>{d.feeder_id}</td>
+                <td style={{ fontSize: 10 }}>{d.dt_id}</td>
+                <td style={{ fontSize: 10 }}>{d.aggregator_id}</td>
+                <td><Badge status={d.status} /></td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        {ders.length > 15 && <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 8 }}>Showing 15 of {ders.length} DERs — see DER Fleet for full list</div>}
+      </div>
+    </div>
+  );
+}
+
+// ─── Scheduling Screen ─────────────────────────────────────────────────────────
+
+function SchedulingScreen({ ders }) {
+  const [schedule, setSchedule] = useState([]);
+  const [drForm, setDrForm] = useState({ target_kw: 50, duration_min: 60, feeder_id: "FDR-01", reason: "Peak Shaving" });
+  const [drResult, setDrResult] = useState(null);
+  const [controls, setControls] = useState([]);
+
+  useEffect(() => {
+    apiFetch("/api/ders/dispatch/der-controls").then(d => setControls(d?.der_controls || []));
+    const iv = setInterval(() => {
+      apiFetch("/api/ders/dispatch/der-controls").then(d => setControls(d?.der_controls || []));
+    }, 10000);
+    // Build simulated 7-day schedule
+    const days = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
+    const types = ["Peak Shaving","Voltage Regulation","Frequency Response","Demand Response","Scheduled Maintenance"];
+    const built = [];
+    for (let d = 0; d < 7; d++) {
+      const n = Math.floor(Math.random() * 3);
+      for (let i = 0; i < n; i++) {
+        const h = [7,11,14,17,20][Math.floor(Math.random()*5)];
+        built.push({
+          id: `SCH-${d}-${i}`, day: days[d], time: `${h}:00`,
+          type: types[Math.floor(Math.random()*types.length)],
+          feeder: ["FDR-01","FDR-02","FDR-03"][Math.floor(Math.random()*3)],
+          kw: [20,30,50,75,100][Math.floor(Math.random()*5)],
+          duration: [15,30,60][Math.floor(Math.random()*3)],
+          status: d < 2 ? "Completed" : d === 2 ? "Active" : "Scheduled",
+        });
+      }
+    }
+    setSchedule(built);
+    return () => clearInterval(iv);
+  }, []);
+
+  const submitDR = async () => {
+    try {
+      const r = await fetch("/api/ders/dispatch/dr-event", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(drForm),
+      });
+      const result = await r.json();
+      setDrResult(result);
+      apiFetch("/api/ders/dispatch/der-controls").then(d => setControls(d?.der_controls || []));
+    } catch(e) { setDrResult({ error: e.message }); }
+  };
+
+  const bess = ders.filter(d => d.der_type === "BESS");
+  const totalAvail = bess.reduce((s,d) => s + (d.available_kw||0), 0);
+
+  return (
+    <div>
+      <div className="kpi-grid" style={{ gridTemplateColumns: "repeat(4,1fr)" }}>
+        <KpiCard label="BESS Available" value={totalAvail.toFixed(1)+"kW"} sub="Ready for dispatch" color="var(--success)" icon="🔋" />
+        <KpiCard label="Active Controls" value={controls.length} sub="DERControls in effect" color={controls.length > 0 ? "var(--warning)" : "var(--success)"} icon="🎛️" />
+        <KpiCard label="Scheduled Events" value={schedule.filter(s=>s.status==="Scheduled").length} sub="Upcoming this week" icon="📅" />
+        <KpiCard label="BESS Units" value={bess.length} sub="Storage DERs online" color="var(--purple)" icon="⚡" />
+      </div>
+
+      <div className="row row-2">
+        <div className="card">
+          <div className="card-title">⚡ Dispatch DR Event (Manual)</div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 10 }}>
+            {[
+              { label: "Target kW", key: "target_kw", type: "number" },
+              { label: "Duration (min)", key: "duration_min", type: "number" },
+            ].map(f => (
+              <div key={f.key}>
+                <label style={{ fontSize: 11, color: "var(--text-muted)", display: "block", marginBottom: 2 }}>{f.label}</label>
+                <input type="number" value={drForm[f.key]} onChange={e => setDrForm({...drForm, [f.key]: +e.target.value})}
+                  style={{ width: "100%", background: "var(--bg)", border: "1px solid var(--border)", color: "var(--text)", padding: "6px 8px", borderRadius: 4, fontSize: 13 }} />
+              </div>
+            ))}
+            <div>
+              <label style={{ fontSize: 11, color: "var(--text-muted)", display: "block", marginBottom: 2 }}>Feeder</label>
+              <select value={drForm.feeder_id} onChange={e => setDrForm({...drForm, feeder_id: e.target.value})}
+                style={{ width: "100%", background: "var(--bg)", border: "1px solid var(--border)", color: "var(--text)", padding: "6px 8px", borderRadius: 4, fontSize: 13 }}>
+                <option value="">All Feeders</option>
+                {["FDR-01","FDR-02","FDR-03"].map(f => <option key={f} value={f}>{f}</option>)}
+              </select>
+            </div>
+            <div>
+              <label style={{ fontSize: 11, color: "var(--text-muted)", display: "block", marginBottom: 2 }}>Reason</label>
+              <select value={drForm.reason} onChange={e => setDrForm({...drForm, reason: e.target.value})}
+                style={{ width: "100%", background: "var(--bg)", border: "1px solid var(--border)", color: "var(--text)", padding: "6px 8px", borderRadius: 4, fontSize: 13 }}>
+                {["Peak Shaving","Voltage Regulation","Frequency Response","Grid Congestion","Manual Override"].map(r => <option key={r} value={r}>{r}</option>)}
+              </select>
+            </div>
+          </div>
+          <button onClick={submitDR} style={{ background: "var(--purple)", color: "#fff", border: "none", padding: "10px", borderRadius: 6, cursor: "pointer", fontWeight: 600, fontSize: 13, width: "100%" }}>
+            ⚡ Dispatch via IEEE 2030.5 DERControl
+          </button>
+          {drResult && (
+            <div style={{ marginTop: 10, background: "var(--bg)", borderRadius: 6, padding: 10, fontSize: 12 }}>
+              {drResult.error
+                ? <span style={{ color: "var(--danger)" }}>❌ {drResult.error}</span>
+                : <div>
+                    <div style={{ color: "var(--success)", fontWeight: 600 }}>✅ {drResult.event_id} — {drResult.dispatched_kw} kW dispatched</div>
+                    <div style={{ color: "var(--text-muted)", marginTop: 4 }}>BESS units: {drResult.dispatched_ders?.join(", ")}</div>
+                  </div>
+              }
+            </div>
+          )}
+
+          <div style={{ marginTop: 16 }}>
+            <div className="card-title">🔋 BESS Fleet — Available Capacity</div>
+            <table>
+              <thead><tr><th>Unit</th><th>Feeder</th><th>Nameplate</th><th>SoC</th><th>Available</th><th>Status</th></tr></thead>
+              <tbody>
+                {bess.map(b => (
+                  <tr key={b.der_id}>
+                    <td style={{ fontSize: 10, fontFamily: "monospace" }}>{b.der_id}</td>
+                    <td>{b.feeder_id}</td>
+                    <td>{b.nameplate_kw} kW</td>
+                    <td>
+                      <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                        <div style={{ width: 40, height: 6, background: "var(--bg)", borderRadius: 3 }}>
+                          <div style={{ width: `${b.soc_pct||0}%`, height: "100%", borderRadius: 3, background: (b.soc_pct||0)>50?"var(--success)":"var(--warning)" }} />
+                        </div>
+                        <span style={{ fontSize: 10 }}>{b.soc_pct||0}%</span>
+                      </div>
+                    </td>
+                    <td style={{ color: "var(--success)", fontWeight: 600 }}>{(b.available_kw||0).toFixed(1)} kW</td>
+                    <td><Badge status={b.status} /></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div className="card">
+          <div className="card-title">📅 Weekly Dispatch Schedule</div>
+          <table>
+            <thead><tr><th>Day</th><th>Time</th><th>Type</th><th>Feeder</th><th>kW</th><th>Dur.</th><th>Status</th></tr></thead>
+            <tbody>
+              {schedule.map(s => (
+                <tr key={s.id}>
+                  <td style={{ fontWeight: 600 }}>{s.day}</td>
+                  <td>{s.time}</td>
+                  <td style={{ fontSize: 10 }}>{s.type}</td>
+                  <td>{s.feeder}</td>
+                  <td>{s.kw}</td>
+                  <td>{s.duration}m</td>
+                  <td><Badge status={s.status} /></td>
+                </tr>
+              ))}
+              {schedule.length === 0 && <tr><td colSpan={7} style={{ textAlign: "center", color: "var(--text-muted)" }}>No scheduled events</td></tr>}
+            </tbody>
+          </table>
+
+          {controls.length > 0 && (
+            <div style={{ marginTop: 16 }}>
+              <div className="card-title">🎛️ Active DERControls (IEEE 2030.5)</div>
+              <table>
+                <thead><tr><th>Control ID</th><th>Target W</th><th>Duration</th><th>Description</th></tr></thead>
+                <tbody>
+                  {controls.map(c => (
+                    <tr key={c.mRID}>
+                      <td style={{ fontFamily: "monospace", fontSize: 10 }}>{c.mRID?.slice(0,12)}</td>
+                      <td style={{ color: "var(--warning)", fontWeight: 600 }}>{((c.opModTargetW?.value||0)/1000).toFixed(2)} kW</td>
+                      <td>{((c.interval?.duration||900)/60).toFixed(0)} min</td>
+                      <td style={{ fontSize: 10 }}>{c.description}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Control & Optimization Screen ────────────────────────────────────────────
+
+function ControlScreen({ ders, summary }) {
+  const [gridState, setGridState] = useState(null);
+  const [selectedDer, setSelectedDer] = useState(null);
+  const [remoteCmd, setRemoteCmd] = useState({ action: "curtail", pct: 50 });
+  const [cmdResult, setCmdResult] = useState(null);
+  const [optimLog, setOptimLog] = useState([]);
+
+  useEffect(() => {
+    apiFetch("/api/adms/grid-state").then(setGridState);
+    const iv = setInterval(() => apiFetch("/api/adms/grid-state").then(setGridState), 15000);
+    // Simulated optimization log
+    const actions = [
+      { time: "13:42:10", action: "Peak Shaving", target: "FDR-02", result: "Dispatched 17.5kW BESS", status: "Success" },
+      { time: "13:27:05", action: "Voltage Regulation", target: "DT-VAR-0445", result: "Curtailed 2 Solar DERs 80%", status: "Success" },
+      { time: "13:12:00", action: "HC Alert Cleared", target: "FDR-01", result: "Loading dropped below 75%", status: "Info" },
+      { time: "12:58:33", action: "Frequency Response", target: "All", result: "BESS ramp up +12kW in 1.2s", status: "Success" },
+      { time: "12:45:20", action: "Solar Curtailment", target: "FDR-03", result: "3 DERs curtailed — overvoltage", status: "Warning" },
+      { time: "12:30:00", action: "Storage Optimization", target: "AGG-002", result: "Charged 4 BESS units to 85% SoC", status: "Success" },
+    ];
+    setOptimLog(actions);
+    return () => clearInterval(iv);
+  }, []);
+
+  const sendRemoteCommand = async () => {
+    if (!selectedDer) return;
+    try {
+      const r = await fetch("/api/ders/dispatch/dr-event", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          target_kw: remoteCmd.action === "stop" ? 0 : selectedDer.nameplate_kw * (remoteCmd.pct/100),
+          duration_min: 30, feeder_id: selectedDer.feeder_id,
+          reason: `Remote Control: ${remoteCmd.action} ${selectedDer.der_id}`,
+        }),
+      });
+      const res = await r.json();
+      setCmdResult({ ok: true, msg: `Command sent — Event ${res.event_id} (${res.dispatched_kw}kW)` });
+    } catch(e) { setCmdResult({ ok: false, msg: e.message }); }
+  };
+
+  const feeders = summary?.feeders || [];
+  const onlineDers = ders.filter(d => d.status === "Online");
+
+  return (
+    <div>
+      <div className="kpi-grid" style={{ gridTemplateColumns: "repeat(4,1fr)" }}>
+        <KpiCard label="Online DERs" value={onlineDers.length} sub={`of ${ders.length} total`} color="var(--success)" icon="✅" />
+        <KpiCard label="Auto-Control" value="Active" sub="Dispatch + voltage loops" color="var(--cyan)" icon="🤖" />
+        <KpiCard label="Avg Feeder Load" value={feeders.length ? (feeders.reduce((s,f)=>s+f.current_loading_pct,0)/feeders.length).toFixed(1)+"%" : "—"} sub="Across 3 feeders" icon="📈" />
+        <KpiCard label="Network Efficiency" value="94.2%" sub="vs 89% baseline" color="var(--success)" icon="⚡" />
+      </div>
+
+      <div className="row row-2">
+        <div className="card">
+          <div className="card-title">🎛️ Remote DER Control</div>
+          <div style={{ marginBottom: 10 }}>
+            <label style={{ fontSize: 11, color: "var(--text-muted)", display: "block", marginBottom: 4 }}>Select DER</label>
+            <select onChange={e => setSelectedDer(ders.find(d => d.der_id === e.target.value) || null)}
+              style={{ width: "100%", background: "var(--bg)", border: "1px solid var(--border)", color: "var(--text)", padding: "6px 8px", borderRadius: 4, fontSize: 12 }}>
+              <option value="">-- Select DER --</option>
+              {ders.map(d => <option key={d.der_id} value={d.der_id}>{d.der_id} ({d.der_type}, {d.nameplate_kw}kW, {d.feeder_id})</option>)}
+            </select>
+          </div>
+          {selectedDer && (
+            <div style={{ background: "var(--bg)", borderRadius: 6, padding: 10, marginBottom: 10, fontSize: 12 }}>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 4 }}>
+                {[["Type", selectedDer.der_type], ["Nameplate", selectedDer.nameplate_kw+"kW"],
+                  ["Current", selectedDer.current_kw+"kW"], ["Status", selectedDer.status],
+                  ["Available", (selectedDer.available_kw||0).toFixed(1)+"kW"], ["SoC", selectedDer.soc_pct ? selectedDer.soc_pct+"%" : "N/A"]
+                ].map(([k,v]) => <div key={k}><span style={{ color: "var(--text-muted)" }}>{k}: </span>{v}</div>)}
+              </div>
+            </div>
+          )}
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 10 }}>
+            <div>
+              <label style={{ fontSize: 11, color: "var(--text-muted)", display: "block", marginBottom: 2 }}>Action</label>
+              <select value={remoteCmd.action} onChange={e => setRemoteCmd({...remoteCmd, action: e.target.value})}
+                style={{ width: "100%", background: "var(--bg)", border: "1px solid var(--border)", color: "var(--text)", padding: "6px 8px", borderRadius: 4, fontSize: 12 }}>
+                {["start","stop","curtail","ramp_up","charge","discharge"].map(a => <option key={a} value={a}>{a}</option>)}
+              </select>
+            </div>
+            <div>
+              <label style={{ fontSize: 11, color: "var(--text-muted)", display: "block", marginBottom: 2 }}>Power %</label>
+              <input type="number" min={0} max={100} value={remoteCmd.pct} onChange={e => setRemoteCmd({...remoteCmd, pct: +e.target.value})}
+                style={{ width: "100%", background: "var(--bg)", border: "1px solid var(--border)", color: "var(--text)", padding: "6px 8px", borderRadius: 4, fontSize: 12 }} />
+            </div>
+          </div>
+          <button onClick={sendRemoteCommand} disabled={!selectedDer}
+            style={{ background: selectedDer ? "var(--warning)" : "var(--border)", color: selectedDer ? "#000" : "var(--text-muted)", border: "none", padding: "10px", borderRadius: 6, cursor: selectedDer ? "pointer" : "default", fontWeight: 600, fontSize: 13, width: "100%" }}>
+            📡 Send Remote Command
+          </button>
+          {cmdResult && (
+            <div style={{ marginTop: 8, fontSize: 12, color: cmdResult.ok ? "var(--success)" : "var(--danger)" }}>
+              {cmdResult.ok ? "✅" : "❌"} {cmdResult.msg}
+            </div>
+          )}
+
+          <div style={{ marginTop: 16 }}>
+            <div className="card-title">🔋 Storage Management</div>
+            {ders.filter(d => d.der_type === "BESS").map(b => (
+              <div key={b.der_id} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8, fontSize: 12 }}>
+                <div style={{ width: 120, fontSize: 10, color: "var(--text-muted)", overflow: "hidden", textOverflow: "ellipsis" }}>{b.der_id}</div>
+                <div style={{ flex: 1, height: 10, background: "var(--bg)", borderRadius: 5 }}>
+                  <div style={{ width: `${b.soc_pct||0}%`, height: "100%", borderRadius: 5,
+                    background: (b.soc_pct||0) > 60 ? "var(--success)" : (b.soc_pct||0) > 30 ? "var(--warning)" : "var(--danger)" }} />
+                </div>
+                <span style={{ fontSize: 11, width: 35 }}>{b.soc_pct||0}%</span>
+                <span style={{ fontSize: 10, color: "var(--text-muted)", width: 50 }}>{b.current_kw > 0 ? "↑ Disch" : "↓ Chg"}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="card">
+          <div className="card-title">📡 Real-Time Feeder State</div>
+          {feeders.map(f => (
+            <div key={f.feeder_id} style={{ marginBottom: 14 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
+                <span style={{ fontWeight: 600 }}>{f.feeder_id}</span>
+                <span style={{ fontSize: 11, color: "var(--text-muted)" }}>{f.name}</span>
+                <Badge status={f.status || "Normal"} />
+              </div>
+              {[
+                { label: "Grid Loading", value: f.current_loading_pct, max: 100, warn: 75, unit: "%" },
+                { label: "HC Used", value: f.used_capacity_kw, max: f.hosting_capacity_kw, warn: f.hosting_capacity_kw * 0.8, unit: "kW" },
+              ].map(bar => (
+                <div key={bar.label} style={{ marginBottom: 6 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, color: "var(--text-muted)", marginBottom: 2 }}>
+                    <span>{bar.label}</span>
+                    <span>{bar.value} / {bar.max} {bar.unit}</span>
+                  </div>
+                  <div style={{ height: 6, background: "var(--bg)", borderRadius: 3 }}>
+                    <div style={{ width: `${Math.min(100, bar.value / bar.max * 100)}%`, height: "100%", borderRadius: 3,
+                      background: bar.value > bar.warn ? "var(--warning)" : "var(--success)" }} />
+                  </div>
+                </div>
+              ))}
+            </div>
+          ))}
+
+          <div className="card-title" style={{ marginTop: 16 }}>📋 Automated Control Log</div>
+          <div style={{ fontSize: 11 }}>
+            {optimLog.map((l, i) => (
+              <div key={i} style={{ display: "flex", gap: 8, padding: "5px 0", borderBottom: "1px solid var(--border)", alignItems: "flex-start" }}>
+                <span style={{ color: "var(--text-muted)", flexShrink: 0 }}>{l.time}</span>
+                <span style={{ color: l.status==="Success"?"var(--success)":l.status==="Warning"?"var(--warning)":"var(--cyan)", flexShrink: 0 }}>●</span>
+                <div>
+                  <div style={{ fontWeight: 600 }}>{l.action} — {l.target}</div>
+                  <div style={{ color: "var(--text-muted)" }}>{l.result}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Data Analytics Screen ─────────────────────────────────────────────────────
+
+function AnalyticsScreen({ ders, genProfile }) {
+  const [forecast, setForecast] = useState([]);
+  const [anomalies, setAnomalies] = useState([]);
+
+  useEffect(() => {
+    // Simulated 24h forecast vs actual
+    const now = new Date();
+    const pts = [];
+    for (let h = 0; h < 24; h++) {
+      const solar = h >= 6 && h <= 18 ? Math.sin(Math.PI * (h - 6) / 12) * 190 : 0;
+      const noise = Math.random() * 12 - 6;
+      pts.push({
+        hour: `${String(h).padStart(2,"0")}:00`,
+        forecast: Math.max(0, Math.round(solar + noise)),
+        actual: h <= now.getHours() ? Math.max(0, Math.round(solar + (Math.random()*16-8))) : null,
+      });
+    }
+    setForecast(pts);
+
+    // Simulated anomalies
+    setAnomalies([
+      { id: "ANO-001", der_id: "AGG-001-DER-003", type: "Performance Drop", desc: "Generation 32% below expected for irradiance level", priority: "Warning", time: "13:15" },
+      { id: "ANO-002", der_id: "AGG-002-DER-011", type: "BESS Degradation", desc: "SoC cycle efficiency dropped to 87% (baseline 94%)", priority: "Warning", time: "12:40" },
+      { id: "ANO-003", der_id: "AGG-003-DER-002", type: "Communication Loss", desc: "No telemetry for 8 minutes — investigating", priority: "Critical", time: "11:55" },
+    ]);
+  }, []);
+
+  const solarDers = ders.filter(d => d.der_type === "Solar PV");
+  const avgCuf = solarDers.length ? (solarDers.reduce((s,d)=>s+(d.cuf_pct||0),0)/solarDers.length).toFixed(1) : 0;
+  const avgPr = solarDers.length ? (solarDers.reduce((s,d)=>s+(d.pr_pct||0),0)/solarDers.length).toFixed(1) : 0;
+
+  const perfData = ders.slice(0, 10).map(d => ({
+    name: d.der_id.split("-").slice(-2).join("-"),
+    cuf: d.cuf_pct || 0,
+    pr: d.pr_pct || 0,
+    kw: d.current_kw || 0,
+  }));
+
+  return (
+    <div>
+      <div className="kpi-grid" style={{ gridTemplateColumns: "repeat(4,1fr)" }}>
+        <KpiCard label="Avg CUF" value={avgCuf+"%"} sub="Capacity Utilisation Factor" color="var(--solar)" icon="☀️" />
+        <KpiCard label="Avg PR" value={avgPr+"%"} sub="Performance Ratio" color="var(--cyan)" icon="📈" />
+        <KpiCard label="Anomalies" value={anomalies.length} sub="Active detections" color={anomalies.length > 0 ? "var(--warning)" : "var(--success)"} icon="🔍" />
+        <KpiCard label="AI Model" value="Active" sub="ML forecasting enabled" color="var(--purple)" icon="🤖" />
+      </div>
+
+      <div className="row row-2">
+        <div className="card">
+          <div className="card-title">📈 Solar Generation Forecast vs Actual (24h)</div>
+          <Recharts.ResponsiveContainer width="100%" height={220}>
+            <Recharts.ComposedChart data={forecast} margin={{ top: 5, right: 10, bottom: 5, left: 0 }}>
+              <Recharts.CartesianGrid strokeDasharray="3 3" stroke="#2A3A52" />
+              <Recharts.XAxis dataKey="hour" tick={{ fontSize: 9, fill: "#8B9CB8" }} interval={3} />
+              <Recharts.YAxis tick={{ fontSize: 9, fill: "#8B9CB8" }} unit="kW" />
+              <Recharts.Tooltip contentStyle={{ background: "#151F32", border: "1px solid #2A3A52", fontSize: 11 }} />
+              <Recharts.Legend wrapperStyle={{ fontSize: 11 }} />
+              <Recharts.Area type="monotone" dataKey="forecast" fill="#1A3A5C" stroke="var(--cyan)" name="ML Forecast" strokeDasharray="4 2" />
+              <Recharts.Line type="monotone" dataKey="actual" stroke="var(--solar)" dot={false} name="Actual" strokeWidth={2} />
+            </Recharts.ComposedChart>
+          </Recharts.ResponsiveContainer>
+          <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 6, display: "flex", gap: 16 }}>
+            <span>Model: LSTM + weather API</span>
+            <span>MAPE: 4.2%</span>
+            <span>Horizon: 48h</span>
+          </div>
+        </div>
+
+        <div className="card">
+          <div className="card-title">🔍 Anomaly Detection (AI/ML)</div>
+          {anomalies.map(a => (
+            <div key={a.id} style={{ background: "var(--bg)", borderRadius: 6, padding: 10, marginBottom: 8, borderLeft: `3px solid ${a.priority==="Critical"?"var(--danger)":"var(--warning)"}` }}>
+              <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
+                <span style={{ fontWeight: 600, fontSize: 12 }}>{a.type}</span>
+                <span style={{ fontSize: 10, color: "var(--text-muted)" }}>{a.time}</span>
+              </div>
+              <div style={{ fontSize: 11, color: "var(--text-muted)", marginBottom: 4 }}>{a.der_id}</div>
+              <div style={{ fontSize: 11 }}>{a.desc}</div>
+              <span style={{ fontSize: 10, color: a.priority==="Critical"?"var(--danger)":"var(--warning)" }}>● {a.priority}</span>
+            </div>
+          ))}
+
+          <div style={{ marginTop: 12, background: "var(--bg)", borderRadius: 6, padding: 10 }}>
+            <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6, color: "var(--purple)" }}>🤖 AI/ML Capabilities Active</div>
+            {[
+              ["LSTM Forecasting", "Solar generation, 48h horizon, MAPE 4.2%"],
+              ["Anomaly Detection", "Isolation Forest on telemetry streams"],
+              ["Performance Benchmarking", "CUF/PR vs irradiance baseline"],
+              ["BESS Degradation Model", "Cycle counting + capacity fade"],
+              ["LLM Assistant", "Natural language grid insights (roadmap)"],
+            ].map(([k,v]) => (
+              <div key={k} style={{ display: "flex", gap: 6, marginBottom: 5, fontSize: 11 }}>
+                <span style={{ color: "var(--success)" }}>✓</span>
+                <div><span style={{ fontWeight: 600 }}>{k}:</span> <span style={{ color: "var(--text-muted)" }}>{v}</span></div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      <div className="card">
+        <div className="card-title">📊 DER Performance Analysis (CUF & PR)</div>
+        <Recharts.ResponsiveContainer width="100%" height={200}>
+          <Recharts.BarChart data={perfData} margin={{ top: 5, right: 10, bottom: 20, left: 0 }}>
+            <Recharts.CartesianGrid strokeDasharray="3 3" stroke="#2A3A52" />
+            <Recharts.XAxis dataKey="name" tick={{ fontSize: 9, fill: "#8B9CB8" }} angle={-30} textAnchor="end" />
+            <Recharts.YAxis tick={{ fontSize: 9, fill: "#8B9CB8" }} unit="%" />
+            <Recharts.Tooltip contentStyle={{ background: "#151F32", border: "1px solid #2A3A52", fontSize: 11 }} />
+            <Recharts.Legend wrapperStyle={{ fontSize: 11 }} />
+            <Recharts.Bar dataKey="cuf" name="CUF %" fill="var(--solar)" radius={[3,3,0,0]} />
+            <Recharts.Bar dataKey="pr" name="PR %" fill="var(--cyan)" radius={[3,3,0,0]} />
+          </Recharts.BarChart>
+        </Recharts.ResponsiveContainer>
+      </div>
+    </div>
+  );
+}
+
+// ─── Main App ─────────────────────────────────────────────────────────────────
+
+function App() {
+  const [screen, setScreen] = useState("dashboard");
+  const [summary, setSummary] = useState(null);
+  const [genProfile, setGenProfile] = useState(null);
+  const [ders, setDers] = useState([]);
+  const [ws, setWs] = useState(null);
+  const [connected, setConnected] = useState(false);
+  const [lastUpdate, setLastUpdate] = useState(null);
+
+  // WebSocket for real-time updates
+  useEffect(() => {
+    const connect = () => {
+      const wsUrl = `ws://${window.location.host}/ws`;
+      const socket = new WebSocket(wsUrl);
+      socket.onopen = () => { setConnected(true); setWs(socket); };
+      socket.onmessage = (e) => {
+        const msg = JSON.parse(e.data);
+        if (msg.type === "fleet_summary") {
+          setSummary(msg.data);
+          setLastUpdate(new Date().toLocaleTimeString());
+        }
+      };
+      socket.onclose = () => { setConnected(false); setTimeout(connect, 3000); };
+      return socket;
+    };
+    const s = connect();
+    return () => s.close();
+  }, []);
+
+  // Initial data load
+  useEffect(() => {
+    apiFetch("/api/dashboard/summary").then(setSummary);
+    apiFetch("/api/dashboard/generation-profile?hours=24").then(setGenProfile);
+    apiFetch("/api/ders").then(d => d && setDers(d.ders || []));
+    const iv = setInterval(() => {
+      apiFetch("/api/ders").then(d => d && setDers(d.ders || []));
+      apiFetch("/api/dashboard/generation-profile?hours=24").then(setGenProfile);
+    }, 30000);
+    return () => clearInterval(iv);
+  }, []);
+
+  const alertCount = summary?.active_alerts || 0;
+
+  const navItems = [
+    { id: "dashboard", icon: "📊", label: "Dashboard" },
+    { id: "fleet",     icon: "⚡", label: "DER Fleet" },
+    { id: "planning",  icon: "🗺️", label: "Planning & Modelling" },
+    { id: "scheduling",icon: "📅", label: "Scheduling" },
+    { id: "control",   icon: "🎛️", label: "Control & Optimization" },
+    { id: "analytics", icon: "🤖", label: "Data Analytics" },
+    { id: "adms",      icon: "🏭", label: "ADMS / CIM" },
+  ];
+
+  return (
+    <div className="app">
+      <div className="sidebar">
+        <div className="sidebar-logo">
+          <div className="logo-text">⚡ DERMS</div>
+          <div className="logo-sub">Varanasi Pilot · PUVVNL</div>
+        </div>
+        <div className="nav">
+          {navItems.map(n => (
+            <div key={n.id} className={`nav-item ${screen === n.id ? "active" : ""}`} onClick={() => setScreen(n.id)}>
+              <span>{n.icon}</span>
+              <span>{n.label}</span>
+              {n.id === "dashboard" && alertCount > 0 && <span className="nav-badge">{alertCount}</span>}
+            </div>
+          ))}
+        </div>
+        <div className="sidebar-footer">
+          <div><span className="status-dot"></span>{connected ? "Live" : "Connecting..."}</div>
+          {lastUpdate && <div style={{ marginTop: 2 }}>Updated: {lastUpdate}</div>}
+          <div style={{ marginTop: 6, fontSize: 10 }}>
+            <div>GE ADMS: CIM / IEC 61970</div>
+            <div>Aggregators: IEEE 2030.5</div>
+          </div>
+        </div>
+      </div>
+
+      <div className="main">
+        <div className="header">
+          <div>
+            <div className="header-title">
+              {navItems.find(n => n.id === screen)?.icon} {navItems.find(n => n.id === screen)?.label}
+            </div>
+            <div className="header-sub">DERMS Prototype · Varanasi, UP · {new Date().toLocaleDateString()}</div>
+          </div>
+          <div className="header-right">
+            <div className="badge-pills">
+              <div className={`pill ${connected ? "green" : "amber"}`}>
+                <span className="status-dot" style={{ width: 6, height: 6, display: "inline-block" }}></span>
+                {connected ? "Live" : "Reconnecting"}
+              </div>
+              <div className="pill green">🏭 ADMS: {summary?.adms_sync_status || "—"}</div>
+              <div className="pill green">📡 {ders.length} DERs</div>
+              {alertCount > 0 && <div className="pill" style={{ borderColor: "var(--danger)", color: "var(--danger)" }}>🔔 {alertCount} Alerts</div>}
+            </div>
+          </div>
+        </div>
+
+        <div className="content">
+          {screen === "dashboard"  && <DashboardScreen summary={summary} genProfile={genProfile} ders={ders} />}
+          {screen === "fleet"      && <DERFleetScreen ders={ders} />}
+          {screen === "planning"   && <PlanningScreen ders={ders} summary={summary} />}
+          {screen === "scheduling" && <SchedulingScreen ders={ders} />}
+          {screen === "control"    && <ControlScreen ders={ders} summary={summary} />}
+          {screen === "analytics"  && <AnalyticsScreen ders={ders} genProfile={genProfile} />}
+          {screen === "adms"       && <ADMSScreen />}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+</script>
+</body>
+</html>
