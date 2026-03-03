@@ -1281,7 +1281,8 @@ function App() {
   // WebSocket for real-time updates
   useEffect(() => {
     const connect = () => {
-      const wsUrl = `ws://${window.location.host}/ws`;
+      const wsProtocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
+      const wsUrl = `${wsProtocol}://${window.location.host}/ws`;
       const socket = new WebSocket(wsUrl);
       socket.onopen = () => { setConnected(true); setWs(socket); };
       socket.onmessage = (e) => {
