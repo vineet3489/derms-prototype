@@ -1267,6 +1267,326 @@ function AnalyticsScreen({ ders, genProfile }) {
   );
 }
 
+// ─── Demand Response Screen ───────────────────────────────────────────────────
+
+function DemandResponseScreen({ ders, summary }) {
+  const [drEvents, setDrEvents] = useState([]);
+  const [controls, setControls] = useState([]);
+  const [drForm, setDrForm] = useState({ target_kw: 50, duration_min: 60, feeder_id: "", reason: "Peak Shaving" });
+  const [drResult, setDrResult] = useState(null);
+  const [activeTab, setActiveTab] = useState("dispatch");
+  const [submitting, setSubmitting] = useState(false);
+
+  useEffect(() => {
+    const load = () => {
+      apiFetch("/api/ders/dispatch/dr-events").then(d => setDrEvents(d?.events || []));
+      apiFetch("/api/ders/dispatch/der-controls").then(d => setControls(d?.controls || []));
+    };
+    load();
+    const iv = setInterval(load, 10000);
+    return () => clearInterval(iv);
+  }, []);
+
+  const submitDR = async () => {
+    setSubmitting(true);
+    try {
+      const r = await fetch("/api/ders/dispatch/dr-event", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(drForm),
+      });
+      const result = await r.json();
+      setDrResult(result);
+      apiFetch("/api/ders/dispatch/dr-events").then(d => setDrEvents(d?.events || []));
+      apiFetch("/api/ders/dispatch/der-controls").then(d => setControls(d?.controls || []));
+    } catch(e) { setDrResult({ error: e.message }); }
+    finally { setSubmitting(false); }
+  };
+
+  const bess = ders.filter(d => d.der_type === "BESS");
+  const totalAvailKw = bess.reduce((s,d) => s + (d.available_kw||0), 0);
+  const activeEvents = drEvents.filter(e => e.status === "Active");
+  const totalDispatchedKw = activeEvents.reduce((s,e) => s + (e.dispatched_kw||0), 0);
+
+  // Simulated historical events to demonstrate the log
+  const historicalEvents = [
+    { event_id: "DR-202603011430", reason: "Peak Shaving", target_kw: 75, dispatched_kw: 68.5, duration_min: 60, feeder_id: "FDR-02", dispatched_ders: ["BESS-01","BESS-04"], status: "Completed", created_at: "2026-03-01T14:30:00Z" },
+    { event_id: "DR-202602281100", reason: "Voltage Regulation", target_kw: 40, dispatched_kw: 40.0, duration_min: 30, feeder_id: "FDR-01", dispatched_ders: ["BESS-02"], status: "Completed", created_at: "2026-02-28T11:00:00Z" },
+    { event_id: "DR-202602271700", reason: "Grid Congestion", target_kw: 100, dispatched_kw: 87.2, duration_min: 90, feeder_id: null, dispatched_ders: ["BESS-01","BESS-02","BESS-03","BESS-04"], status: "Completed", created_at: "2026-02-27T17:00:00Z" },
+  ];
+  const allEvents = [...drEvents, ...historicalEvents];
+
+  const drPrograms = [
+    { name: "Peak Shaving",       trigger: "Feeder loading > 80%",              response: "Dispatch BESS, curtail EV chargers",       target: "Reduce 20–100 kW",  duration: "30–120 min", protocol: "IEEE 2030.5" },
+    { name: "Voltage Regulation", trigger: "Voltage > 245V or < 215V at DT",    response: "Curtail solar DERs at affected DT",        target: "Restore 230±5V",    duration: "10–60 min",  protocol: "IEEE 2030.5" },
+    { name: "Frequency Response", trigger: "Grid frequency < 49.8 Hz",           response: "BESS fast ramp-up within 1s",              target: "+12 kW fast dispatch", duration: "5–15 min", protocol: "IEEE 2030.5" },
+    { name: "Scheduled DR",       trigger: "PUVVNL / SLDC day-ahead schedule",   response: "Pre-charge BESS, schedule curtailment",    target: "Per schedule block", duration: "Per schedule", protocol: "OpenADR 2.0b" },
+  ];
+
+  return (
+    <div>
+      <div className="kpi-grid" style={{ gridTemplateColumns: "repeat(4,1fr)" }}>
+        <KpiCard label="Active DR Events"   value={activeEvents.length}           sub={activeEvents.length ? "In progress now" : "No active events"} color={activeEvents.length ? "var(--warning)" : "var(--success)"} icon="📉" />
+        <KpiCard label="kW Dispatched"      value={totalDispatchedKw.toFixed(1)}  sub="Via active DR events"     color="var(--purple)" icon="⚡" />
+        <KpiCard label="BESS Available"     value={totalAvailKw.toFixed(1)+"kW"}  sub={`${bess.length} storage units`} color="var(--success)" icon="🔋" />
+        <KpiCard label="Active DERControls" value={controls.length}               sub="IEEE 2030.5 signals"      color={controls.length > 0 ? "var(--cyan)" : "var(--text-muted)"} icon="📡" />
+      </div>
+
+      <div className="tabs">
+        {[["dispatch","⚡ Dispatch"],["history","📋 Event History"],["program","📜 DR Programs"]].map(([id,label]) => (
+          <div key={id} className={`tab ${activeTab===id?"active":""}`} onClick={() => setActiveTab(id)}>{label}</div>
+        ))}
+      </div>
+
+      {activeTab === "dispatch" && (
+        <div className="row row-2">
+          <div className="card">
+            <div className="card-title">⚡ Manual DR Dispatch</div>
+            <div style={{ fontSize: 12, color: "var(--text-muted)", marginBottom: 12 }}>
+              Issues IEEE 2030.5 DERControl signals to available BESS units via the active DER Program (DERP-001).
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 10 }}>
+              {[
+                { label: "Target kW", key: "target_kw", type: "number" },
+                { label: "Duration (min)", key: "duration_min", type: "number" },
+              ].map(f => (
+                <div key={f.key}>
+                  <label style={{ fontSize: 11, color: "var(--text-muted)", display: "block", marginBottom: 2 }}>{f.label}</label>
+                  <input type="number" value={drForm[f.key]} onChange={e => setDrForm({...drForm, [f.key]: +e.target.value})}
+                    style={{ width: "100%", background: "var(--bg)", border: "1px solid var(--border)", color: "var(--text)", padding: "6px 8px", borderRadius: 4, fontSize: 13 }} />
+                </div>
+              ))}
+              <div>
+                <label style={{ fontSize: 11, color: "var(--text-muted)", display: "block", marginBottom: 2 }}>Feeder Scope</label>
+                <select value={drForm.feeder_id} onChange={e => setDrForm({...drForm, feeder_id: e.target.value})}
+                  style={{ width: "100%", background: "var(--bg)", border: "1px solid var(--border)", color: "var(--text)", padding: "6px 8px", borderRadius: 4, fontSize: 13 }}>
+                  <option value="">All Feeders</option>
+                  {["FDR-01","FDR-02","FDR-03"].map(f => <option key={f} value={f}>{f}</option>)}
+                </select>
+              </div>
+              <div>
+                <label style={{ fontSize: 11, color: "var(--text-muted)", display: "block", marginBottom: 2 }}>DR Reason</label>
+                <select value={drForm.reason} onChange={e => setDrForm({...drForm, reason: e.target.value})}
+                  style={{ width: "100%", background: "var(--bg)", border: "1px solid var(--border)", color: "var(--text)", padding: "6px 8px", borderRadius: 4, fontSize: 13 }}>
+                  {["Peak Shaving","Voltage Regulation","Frequency Response","Grid Congestion","Manual Override"].map(r => <option key={r} value={r}>{r}</option>)}
+                </select>
+              </div>
+            </div>
+            <button onClick={submitDR} disabled={submitting}
+              style={{ background: submitting ? "var(--border)" : "var(--purple)", color: "#fff", border: "none", padding: "10px", borderRadius: 6, cursor: submitting ? "default" : "pointer", fontWeight: 600, fontSize: 13, width: "100%" }}>
+              {submitting ? "⏳ Dispatching…" : "⚡ Dispatch via IEEE 2030.5 DERControl"}
+            </button>
+            {drResult && (
+              <div style={{ marginTop: 10, background: "var(--bg)", borderRadius: 6, padding: 10, fontSize: 12 }}>
+                {drResult.error
+                  ? <span style={{ color: "var(--danger)" }}>❌ {drResult.error}</span>
+                  : <div>
+                      <div style={{ color: "var(--success)", fontWeight: 600 }}>✅ {drResult.event_id} — {drResult.dispatched_kw} kW dispatched</div>
+                      <div style={{ color: "var(--text-muted)", marginTop: 4 }}>BESS: {drResult.dispatched_ders?.join(", ") || "None available"}</div>
+                      <div style={{ color: "var(--text-muted)" }}>Duration: {drResult.duration_min} min · Feeder: {drResult.feeder_id || "All"}</div>
+                    </div>
+                }
+              </div>
+            )}
+          </div>
+
+          <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+            <div className="card">
+              <div className="card-title">🔋 BESS Fleet — Dispatch Readiness</div>
+              <table>
+                <thead><tr><th>Unit</th><th>Feeder</th><th>SoC</th><th>Available kW</th><th>Status</th></tr></thead>
+                <tbody>
+                  {bess.map(b => (
+                    <tr key={b.der_id}>
+                      <td style={{ fontSize: 10, fontFamily: "monospace" }}>{b.der_id}</td>
+                      <td>{b.feeder_id}</td>
+                      <td>
+                        <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                          <div style={{ width: 40, height: 6, background: "var(--bg)", borderRadius: 3 }}>
+                            <div style={{ width: `${b.soc_pct||0}%`, height: "100%", borderRadius: 3, background: (b.soc_pct||0)>50?"var(--success)":"var(--warning)" }} />
+                          </div>
+                          <span style={{ fontSize: 10 }}>{b.soc_pct||0}%</span>
+                        </div>
+                      </td>
+                      <td style={{ color: (b.available_kw||0)>0?"var(--success)":"var(--text-muted)", fontWeight: 600 }}>{(b.available_kw||0).toFixed(1)} kW</td>
+                      <td><Badge status={b.status} /></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            {controls.length > 0 && (
+              <div className="card">
+                <div className="card-title">📡 Active DERControls (IEEE 2030.5)</div>
+                <table>
+                  <thead><tr><th>Control ID</th><th>Target kW</th><th>Duration</th><th>Description</th></tr></thead>
+                  <tbody>
+                    {controls.map(c => (
+                      <tr key={c.mRID}>
+                        <td style={{ fontFamily: "monospace", fontSize: 10 }}>{c.mRID?.slice(0,12)}</td>
+                        <td style={{ color: "var(--warning)", fontWeight: 600 }}>{((c.opModTargetW?.value||0)/1000).toFixed(2)} kW</td>
+                        <td>{((c.interval?.duration||900)/60).toFixed(0)} min</td>
+                        <td style={{ fontSize: 10 }}>{c.description}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {activeTab === "history" && (
+        <div className="card">
+          <div className="card-title">📋 DR Event History</div>
+          <table>
+            <thead>
+              <tr>
+                <th>Event ID</th><th>Reason</th><th>Feeder</th>
+                <th>Target kW</th><th>Dispatched kW</th><th>Duration</th>
+                <th>BESS Units</th><th>Status</th><th>Time</th>
+              </tr>
+            </thead>
+            <tbody>
+              {allEvents.length === 0 && (
+                <tr><td colSpan={9} style={{ textAlign: "center", color: "var(--text-muted)", padding: 20 }}>No DR events yet — trigger one from the Dispatch tab</td></tr>
+              )}
+              {allEvents.map((e, i) => {
+                const pct = e.target_kw > 0 ? Math.round(e.dispatched_kw / e.target_kw * 100) : 0;
+                return (
+                  <tr key={e.event_id || i}>
+                    <td style={{ fontFamily: "monospace", fontSize: 10 }}>{e.event_id}</td>
+                    <td style={{ fontSize: 11 }}><span className="tag">{e.reason}</span></td>
+                    <td>{e.feeder_id || "All"}</td>
+                    <td>{e.target_kw} kW</td>
+                    <td>
+                      <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                        <div style={{ width: 36, height: 5, background: "var(--bg)", borderRadius: 3 }}>
+                          <div style={{ width: `${Math.min(100,pct)}%`, height: "100%", borderRadius: 3, background: pct>=90?"var(--success)":pct>=60?"var(--warning)":"var(--danger)" }} />
+                        </div>
+                        <span style={{ fontWeight: 600, color: "var(--success)" }}>{e.dispatched_kw} kW</span>
+                        <span style={{ fontSize: 10, color: "var(--text-muted)" }}>{pct}%</span>
+                      </div>
+                    </td>
+                    <td>{e.duration_min} min</td>
+                    <td style={{ fontSize: 10 }}>{e.dispatched_ders?.length || 0} units</td>
+                    <td><Badge status={e.status} /></td>
+                    <td style={{ fontSize: 10, color: "var(--text-muted)" }}>{e.created_at ? new Date(e.created_at).toLocaleString() : "—"}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+          {allEvents.length > 0 && (
+            <div style={{ marginTop: 14, display: "flex", gap: 12, fontSize: 12 }}>
+              <div style={{ background: "var(--bg)", borderRadius: 6, padding: "7px 12px" }}>
+                <span style={{ color: "var(--text-muted)" }}>Total events: </span>
+                <span style={{ fontWeight: 600 }}>{allEvents.length}</span>
+              </div>
+              <div style={{ background: "var(--bg)", borderRadius: 6, padding: "7px 12px" }}>
+                <span style={{ color: "var(--text-muted)" }}>Total kW shed: </span>
+                <span style={{ fontWeight: 600, color: "var(--success)" }}>{allEvents.reduce((s,e)=>s+(e.dispatched_kw||0),0).toFixed(1)} kW</span>
+              </div>
+              <div style={{ background: "var(--bg)", borderRadius: 6, padding: "7px 12px" }}>
+                <span style={{ color: "var(--text-muted)" }}>Avg. fulfillment: </span>
+                <span style={{ fontWeight: 600, color: "var(--cyan)" }}>{Math.round(allEvents.filter(e=>e.target_kw>0).reduce((s,e)=>s+(e.dispatched_kw/e.target_kw*100),0)/Math.max(allEvents.length,1))}%</span>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {activeTab === "program" && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+          <div className="card">
+            <div className="card-title">📜 PUVVNL DR Program Configuration</div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 10, marginBottom: 4, fontSize: 12 }}>
+              {[
+                { label: "Program Authority",       value: "PUVVNL / UPERC" },
+                { label: "Feeder Loading Trigger",  value: "> 80% loading" },
+                { label: "Overvoltage Trigger",     value: "> 245V at DT" },
+                { label: "Undervoltage Trigger",    value: "< 215V at DT" },
+                { label: "Min Response Time",       value: "1 second (BESS)" },
+                { label: "Max Event Duration",      value: "120 minutes" },
+                { label: "DER Control Protocol",    value: "IEEE 2030.5 DERControl" },
+                { label: "Dispatch Signal Protocol",value: "OpenADR 2.0b" },
+                { label: "Min BESS SoC Required",   value: "> 20% SoC" },
+              ].map(({label, value}) => (
+                <div key={label} style={{ background: "var(--bg)", borderRadius: 6, padding: "8px 12px" }}>
+                  <div style={{ fontSize: 10, color: "var(--text-muted)", marginBottom: 2 }}>{label}</div>
+                  <div style={{ fontWeight: 600, color: "var(--cyan)" }}>{value}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="card">
+            <div className="card-title">📋 DR Program Types — Varanasi Pilot</div>
+            <table>
+              <thead><tr><th>Program</th><th>Trigger Condition</th><th>Response</th><th>Target</th><th>Duration</th><th>Protocol</th></tr></thead>
+              <tbody>
+                {drPrograms.map(p => (
+                  <tr key={p.name}>
+                    <td style={{ fontWeight: 600 }}>{p.name}</td>
+                    <td style={{ fontSize: 11 }}>{p.trigger}</td>
+                    <td style={{ fontSize: 11 }}>{p.response}</td>
+                    <td style={{ fontSize: 11, color: "var(--success)" }}>{p.target}</td>
+                    <td style={{ fontSize: 11 }}>{p.duration}</td>
+                    <td><span className="tag">{p.protocol}</span></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          <div className="row row-2">
+            <div className="card">
+              <div className="card-title">🔋 BESS Dispatch Priority Order</div>
+              <div style={{ fontSize: 12 }}>
+                {bess.map((b, i) => (
+                  <div key={b.der_id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "6px 0", borderBottom: "1px solid var(--border)" }}>
+                    <div style={{ width: 22, height: 22, borderRadius: "50%", background: "var(--secondary)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10, fontWeight: 600, flexShrink: 0 }}>{i+1}</div>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontFamily: "monospace", fontSize: 10 }}>{b.der_id}</div>
+                      <div style={{ fontSize: 10, color: "var(--text-muted)" }}>{b.feeder_id} · SoC: {b.soc_pct||0}%</div>
+                    </div>
+                    <div style={{ fontWeight: 600, color: "var(--success)", fontSize: 12 }}>{(b.available_kw||0).toFixed(1)} kW</div>
+                    <Badge status={(b.soc_pct||0) >= 20 ? "Online" : "Offline"} />
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="card">
+              <div className="card-title">📡 Auto-DR Trigger Rules</div>
+              <div style={{ fontSize: 12 }}>
+                {[
+                  { trigger: "Feeder Overloading",  threshold: "≥ 80% loading",        action: "Auto-curtail solar DERs",      status: "Active" },
+                  { trigger: "Voltage High",         threshold: "> 245V (nom. 230V)",    action: "Curtail solar at DT",          status: "Active" },
+                  { trigger: "Voltage Low",          threshold: "< 215V (nom. 230V)",    action: "Alert + BESS discharge",       status: "Active" },
+                  { trigger: "Hosting Capacity",     threshold: "≥ 80% HC used",         action: "Alert DISCOM",                 status: "Active" },
+                  { trigger: "Frequency Drop",       threshold: "< 49.8 Hz",             action: "BESS fast ramp",               status: "Planned" },
+                ].map((r, i) => (
+                  <div key={i} style={{ display: "flex", gap: 10, padding: "6px 0", borderBottom: "1px solid var(--border)", alignItems: "flex-start" }}>
+                    <span style={{ color: r.status==="Active"?"var(--success)":"var(--text-muted)", fontSize: 14, flexShrink: 0, marginTop: 2 }}>●</span>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontWeight: 600 }}>{r.trigger}</div>
+                      <div style={{ color: "var(--text-muted)", fontSize: 11 }}>Threshold: {r.threshold}</div>
+                      <div style={{ fontSize: 11 }}>→ {r.action}</div>
+                    </div>
+                    <span className={`badge ${r.status==="Active"?"badge-online":"badge-degraded"}`}>{r.status}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── Main App ─────────────────────────────────────────────────────────────────
 
 function App() {
@@ -1312,13 +1632,21 @@ function App() {
   }, []);
 
   const alertCount = summary?.active_alerts || 0;
+  const [drActiveCount, setDrActiveCount] = useState(0);
+  useEffect(() => {
+    const load = () => apiFetch("/api/ders/dispatch/dr-events").then(d => setDrActiveCount((d?.events || []).filter(e => e.status === "Active").length));
+    load();
+    const iv = setInterval(load, 15000);
+    return () => clearInterval(iv);
+  }, []);
 
   const navItems = [
     { id: "dashboard", icon: "📊", label: "Dashboard" },
     { id: "fleet",     icon: "⚡", label: "DER Fleet" },
     { id: "planning",  icon: "🗺️", label: "Planning & Modelling" },
-    { id: "scheduling",icon: "📅", label: "Scheduling" },
-    { id: "control",   icon: "🎛️", label: "Control & Optimization" },
+    { id: "scheduling",        icon: "📅", label: "Scheduling" },
+    { id: "demand-response",  icon: "📉", label: "Demand Response" },
+    { id: "control",          icon: "🎛️", label: "Control & Optimization" },
     { id: "analytics", icon: "🤖", label: "Data Analytics" },
     { id: "adms",      icon: "🏭", label: "ADMS / CIM" },
   ];
@@ -1336,6 +1664,7 @@ function App() {
               <span>{n.icon}</span>
               <span>{n.label}</span>
               {n.id === "dashboard" && alertCount > 0 && <span className="nav-badge">{alertCount}</span>}
+              {n.id === "demand-response" && drActiveCount > 0 && <span className="nav-badge">{drActiveCount}</span>}
             </div>
           ))}
         </div>
@@ -1374,8 +1703,9 @@ function App() {
           {screen === "dashboard"  && <DashboardScreen summary={summary} genProfile={genProfile} ders={ders} />}
           {screen === "fleet"      && <DERFleetScreen ders={ders} />}
           {screen === "planning"   && <PlanningScreen ders={ders} summary={summary} />}
-          {screen === "scheduling" && <SchedulingScreen ders={ders} />}
-          {screen === "control"    && <ControlScreen ders={ders} summary={summary} />}
+          {screen === "scheduling"       && <SchedulingScreen ders={ders} />}
+          {screen === "demand-response" && <DemandResponseScreen ders={ders} summary={summary} />}
+          {screen === "control"         && <ControlScreen ders={ders} summary={summary} />}
           {screen === "analytics"  && <AnalyticsScreen ders={ders} genProfile={genProfile} />}
           {screen === "adms"       && <ADMSScreen />}
         </div>
