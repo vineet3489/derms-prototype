@@ -1267,6 +1267,329 @@ function AnalyticsScreen({ ders, genProfile }) {
   );
 }
 
+// ─── Consumer Enrollment Panel ────────────────────────────────────────────────
+
+function ConsumerEnrollmentPanel({ consumers, onRefresh }) {
+  const [lookupNo, setLookupNo]       = useState("");
+  const [lookupResult, setLookupResult] = useState(null);
+  const [lookupBusy, setLookupBusy]   = useState(false);
+  const [consent, setConsent]         = useState(false);
+  const [enrollBusy, setEnrollBusy]   = useState(null); // consumer_no being actioned
+  const [actionMsg, setActionMsg]     = useState(null);
+
+  const doLookup = async () => {
+    if (!lookupNo.trim()) return;
+    setLookupBusy(true);
+    setLookupResult(null);
+    setConsent(false);
+    const data = await apiFetch(`/api/dr/consumers/lookup?consumer_no=${encodeURIComponent(lookupNo.trim())}`);
+    setLookupResult(data);
+    setLookupBusy(false);
+  };
+
+  const doEnroll = async (consumer_no, consumerData) => {
+    setEnrollBusy(consumer_no);
+    setActionMsg(null);
+    try {
+      const r = await fetch(`/api/dr/consumers/${encodeURIComponent(consumer_no)}/enroll`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(consumerData || {}),
+      });
+      const res = await r.json();
+      setActionMsg({ ok: res.status !== "error", text: res.message });
+      setLookupResult(null);
+      setLookupNo("");
+      setConsent(false);
+      onRefresh();
+    } catch(e) { setActionMsg({ ok: false, text: e.message }); }
+    setEnrollBusy(null);
+  };
+
+  const doUnenroll = async (consumer_no) => {
+    setEnrollBusy(consumer_no);
+    setActionMsg(null);
+    try {
+      const r = await fetch(`/api/dr/consumers/${encodeURIComponent(consumer_no)}/unenroll`, { method: "POST" });
+      const res = await r.json();
+      setActionMsg({ ok: res.status !== "error", text: res.message });
+      onRefresh();
+    } catch(e) { setActionMsg({ ok: false, text: e.message }); }
+    setEnrollBusy(null);
+  };
+
+  const btnStyle = (color) => ({
+    background: color, color: color === "var(--border)" ? "var(--text-muted)" : "#fff",
+    border: "none", padding: "4px 10px", borderRadius: 4, cursor: "pointer",
+    fontSize: 11, fontWeight: 600, whiteSpace: "nowrap",
+  });
+
+  const enrolled  = (consumers?.consumers || []).filter(c =>  c.enrolled);
+  const prospects = (consumers?.consumers || []).filter(c => !c.enrolled);
+
+  return (
+    <div>
+      {/* ── Summary KPIs ── */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 12, marginBottom: 16 }}>
+        {[
+          { label: "Total Consumers",  value: consumers?.total_consumers || 0,    color: "var(--text)" },
+          { label: "Enrolled",          value: consumers?.enrolled_count || 0,     color: "var(--success)" },
+          { label: "Not Enrolled",      value: (consumers?.total_consumers||0) - (consumers?.enrolled_count||0), color: "var(--warning)" },
+          { label: "Available Flex",    value: `${((consumers?.total_enrolled_demand_kw||0)*0.3).toFixed(0)} kW`, color: "var(--cyan)" },
+        ].map(({ label, value, color }) => (
+          <div key={label} className="card" style={{ textAlign: "center", padding: "12px" }}>
+            <div style={{ fontSize: 10, color: "var(--text-muted)", marginBottom: 4 }}>{label}</div>
+            <div style={{ fontWeight: 700, fontSize: 24, color }}>{value}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* ── Action feedback ── */}
+      {actionMsg && (
+        <div style={{ background: actionMsg.ok ? "rgba(16,185,129,0.12)" : "rgba(239,68,68,0.12)",
+          border: `1px solid ${actionMsg.ok ? "var(--success)" : "var(--danger)"}`,
+          borderRadius: 8, padding: "10px 16px", marginBottom: 16, fontSize: 13,
+          color: actionMsg.ok ? "var(--success)" : "var(--danger)", display: "flex", alignItems: "center", gap: 8 }}>
+          {actionMsg.ok ? "✅" : "❌"} {actionMsg.text}
+          <button onClick={() => setActionMsg(null)} style={{ marginLeft: "auto", background: "none", border: "none", cursor: "pointer", color: "inherit", fontSize: 16 }}>✕</button>
+        </div>
+      )}
+
+      <div className="row row-2" style={{ marginBottom: 16 }}>
+        {/* ── Billing System Lookup & Enrollment ── */}
+        <div className="card">
+          <div className="card-title">🔍 Enroll New Consumer — Billing System Lookup</div>
+          <div style={{ fontSize: 12, color: "var(--text-muted)", marginBottom: 12 }}>
+            Enter a consumer number to fetch master data from the PuVVNL billing system, review details, and enroll in the DR program.
+          </div>
+
+          {/* Step 1: Lookup */}
+          <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
+            <input
+              value={lookupNo}
+              onChange={e => setLookupNo(e.target.value)}
+              onKeyDown={e => e.key === "Enter" && doLookup()}
+              placeholder="e.g. VAR-C-005"
+              style={{ flex: 1, background: "var(--bg)", border: "1px solid var(--border)", color: "var(--text)",
+                padding: "7px 10px", borderRadius: 4, fontSize: 13 }}
+            />
+            <button onClick={doLookup} disabled={lookupBusy}
+              style={{ background: "var(--cyan)", color: "#000", border: "none", padding: "7px 16px",
+                borderRadius: 4, cursor: "pointer", fontWeight: 600, fontSize: 13 }}>
+              {lookupBusy ? "⏳" : "Lookup"}
+            </button>
+          </div>
+
+          {/* Step 2: Review billing data */}
+          {lookupResult && !lookupResult.found && (
+            <div style={{ color: "var(--danger)", fontSize: 12 }}>❌ {lookupResult.message}</div>
+          )}
+
+          {lookupResult?.found && lookupResult.consumer && (
+            <div style={{ background: "var(--bg)", borderRadius: 8, padding: 14, fontSize: 12 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 10 }}>
+                <div style={{ fontWeight: 600, fontSize: 14 }}>{lookupResult.consumer.name}</div>
+                <span className="tag" style={{ fontSize: 10, color: "var(--cyan)" }}>{lookupResult.source}</span>
+              </div>
+
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, marginBottom: 12 }}>
+                {[
+                  ["Consumer No.",      lookupResult.consumer.consumer_no],
+                  ["Address",           lookupResult.consumer.address],
+                  ["Contact",           lookupResult.consumer.contact],
+                  ["Tariff",            lookupResult.consumer.tariff_category],
+                  ["Voltage Level",     lookupResult.consumer.voltage_level],
+                  ["Contractual Demand",`${lookupResult.consumer.contractual_demand_kva} kVA`],
+                  ["Max Demand",        `${lookupResult.consumer.max_demand_kw} kW`],
+                  ["Avg Demand",        `${lookupResult.consumer.avg_demand_kw} kW`],
+                  ["Feeder",            lookupResult.consumer.feeder_id],
+                  ["DT",                lookupResult.consumer.dt_id],
+                ].map(([k, v]) => (
+                  <div key={k} style={{ background: "var(--bg-card)", borderRadius: 4, padding: "5px 8px" }}>
+                    <div style={{ fontSize: 10, color: "var(--text-muted)" }}>{k}</div>
+                    <div style={{ fontWeight: 600 }}>{v}</div>
+                  </div>
+                ))}
+              </div>
+
+              {lookupResult.consumer.enrolled ? (
+                <div style={{ color: "var(--success)", fontWeight: 600, fontSize: 12 }}>
+                  ✅ This consumer is already enrolled in the DR program.
+                </div>
+              ) : (
+                <>
+                  {/* Step 3: Consent */}
+                  <label style={{ display: "flex", alignItems: "flex-start", gap: 8, cursor: "pointer",
+                    background: "rgba(247,179,43,0.08)", border: "1px solid rgba(247,179,43,0.3)",
+                    borderRadius: 6, padding: "10px 12px", marginBottom: 12 }}>
+                    <input type="checkbox" checked={consent} onChange={e => setConsent(e.target.checked)}
+                      style={{ marginTop: 2, flexShrink: 0 }} />
+                    <span style={{ fontSize: 11, lineHeight: 1.5 }}>
+                      I confirm that the consumer has been informed about the PUVVNL Demand Response program,
+                      understands the terms including voluntary load reduction and incentive structure
+                      (₹3/kWh), and has given written consent to participate.
+                    </span>
+                  </label>
+
+                  {/* Step 4: Enroll */}
+                  <button
+                    disabled={!consent || enrollBusy === lookupResult.consumer.consumer_no}
+                    onClick={() => doEnroll(lookupResult.consumer.consumer_no, lookupResult.consumer)}
+                    style={{ background: consent ? "var(--success)" : "var(--border)",
+                      color: consent ? "#fff" : "var(--text-muted)",
+                      border: "none", padding: "10px", borderRadius: 6,
+                      cursor: consent ? "pointer" : "default", fontWeight: 600, fontSize: 13, width: "100%" }}>
+                    {enrollBusy === lookupResult.consumer.consumer_no
+                      ? "⏳ Enrolling…"
+                      : "✅ Confirm Enrollment in DR Program"}
+                  </button>
+                </>
+              )}
+            </div>
+          )}
+
+          {/* Enrollment process steps */}
+          {!lookupResult && (
+            <div style={{ marginTop: 12 }}>
+              <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 8, color: "var(--text-muted)" }}>Enrollment Process</div>
+              {[
+                ["1", "Lookup",   "Enter consumer number to fetch billing system data"],
+                ["2", "Review",   "Verify master data: demand, tariff, feeder assignment"],
+                ["3", "Consent",  "Confirm consumer has agreed to DR program terms"],
+                ["4", "Enroll",   "Consumer added to DR program — receives SMS/email confirmation"],
+              ].map(([step, title, desc]) => (
+                <div key={step} style={{ display: "flex", gap: 10, padding: "6px 0", borderBottom: "1px solid var(--border)", alignItems: "flex-start" }}>
+                  <div style={{ width: 20, height: 20, borderRadius: "50%", background: "var(--secondary)",
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                    fontSize: 10, fontWeight: 700, flexShrink: 0 }}>{step}</div>
+                  <div style={{ fontSize: 12 }}>
+                    <span style={{ fontWeight: 600 }}>{title}</span>
+                    <span style={{ color: "var(--text-muted)", marginLeft: 6 }}>{desc}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* ── Prospects (not yet enrolled) ── */}
+        <div className="card">
+          <div className="card-title">📋 Prospects — Not Yet Enrolled</div>
+          {prospects.length === 0 ? (
+            <div style={{ color: "var(--success)", fontSize: 12, padding: 16, textAlign: "center" }}>
+              All known consumers are enrolled!
+            </div>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              {prospects.map(c => (
+                <div key={c.consumer_no} style={{ background: "var(--bg)", borderRadius: 8, padding: "10px 12px",
+                  border: "1px solid var(--border)" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 6 }}>
+                    <div>
+                      <div style={{ fontWeight: 600, fontSize: 12 }}>{c.name}</div>
+                      <div style={{ fontSize: 10, color: "var(--text-muted)", fontFamily: "monospace" }}>{c.consumer_no}</div>
+                    </div>
+                    <button onClick={() => { setLookupNo(c.consumer_no); setLookupResult({ found: true, source: "DERMS Registry", consumer: c }); setConsent(false); }}
+                      style={btnStyle("var(--cyan)")}>
+                      Review &amp; Enroll
+                    </button>
+                  </div>
+                  <div style={{ display: "flex", gap: 12, fontSize: 11, color: "var(--text-muted)" }}>
+                    <span><span className="tag">{c.tariff_category}</span></span>
+                    <span>Avg: <b style={{ color: "var(--text)" }}>{c.avg_demand_kw} kW</b></span>
+                    <span>Max: <b style={{ color: "var(--text)" }}>{c.max_demand_kw} kW</b></span>
+                    <span style={{ color: "var(--cyan)" }}>{c.feeder_id}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* ── Enrolled consumers registry ── */}
+      <div className="card">
+        <div className="card-title">✅ Enrolled Consumers — Active DR Program Members</div>
+        <table>
+          <thead>
+            <tr>
+              <th>Consumer No.</th><th>Name</th><th>Tariff</th><th>Avg Demand</th>
+              <th>Enrolled Since</th><th>Events</th><th>Total Savings (INR)</th><th>Action</th>
+            </tr>
+          </thead>
+          <tbody>
+            {enrolled.length === 0 && (
+              <tr><td colSpan={8} style={{ textAlign: "center", color: "var(--text-muted)", padding: 20 }}>
+                No consumers enrolled yet. Use the lookup panel above to enroll consumers.
+              </td></tr>
+            )}
+            {enrolled.map(c => (
+              <tr key={c.consumer_no}>
+                <td style={{ fontFamily: "monospace", fontSize: 10 }}>{c.consumer_no}</td>
+                <td style={{ fontSize: 11 }}>{c.name}</td>
+                <td><span className="tag">{c.tariff_category}</span></td>
+                <td>{c.avg_demand_kw} kW</td>
+                <td style={{ fontSize: 10, color: "var(--text-muted)" }}>{c.enrollment_date || "—"}</td>
+                <td style={{ fontWeight: 600, color: c.events_participated > 0 ? "var(--success)" : "var(--text-muted)" }}>
+                  {c.events_participated}
+                </td>
+                <td style={{ fontWeight: 600, color: "var(--solar)" }}>
+                  {c.total_savings_inr > 0 ? `₹${c.total_savings_inr.toLocaleString()}` : "—"}
+                </td>
+                <td>
+                  <button onClick={() => doUnenroll(c.consumer_no)}
+                    disabled={enrollBusy === c.consumer_no}
+                    style={btnStyle("var(--danger)")}>
+                    {enrollBusy === c.consumer_no ? "⏳" : "Unenroll"}
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      {/* ── Month-wise consumption ── */}
+      {enrolled.length > 0 && (
+        <div className="card" style={{ marginTop: 16 }}>
+          <div className="card-title">📊 Month-wise Energy Consumption — Enrolled Consumers (kWh)</div>
+          <div style={{ overflowX: "auto" }}>
+            <table>
+              <thead>
+                <tr>
+                  <th>Consumer</th>
+                  {["Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec","Jan","Feb","Mar"].map(m => <th key={m}>{m}</th>)}
+                  <th>Avg/Mo</th>
+                </tr>
+              </thead>
+              <tbody>
+                {enrolled.map(c => {
+                  const avg = Math.round(c.monthly_consumption_kwh.reduce((s,v) => s+v, 0) / 12);
+                  return (
+                    <tr key={c.consumer_no}>
+                      <td style={{ fontSize: 10, fontWeight: 600 }}>{c.consumer_no}</td>
+                      {c.monthly_consumption_kwh.map((v, i) => (
+                        <td key={i} style={{ fontSize: 10, textAlign: "right",
+                          color: v > avg * 1.2 ? "var(--danger)" : v > avg ? "var(--warning)" : "var(--text)" }}>
+                          {v.toLocaleString()}
+                        </td>
+                      ))}
+                      <td style={{ fontWeight: 600, color: "var(--cyan)", fontSize: 11 }}>{avg.toLocaleString()}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+          <div style={{ fontSize: 10, color: "var(--text-muted)", marginTop: 6 }}>
+            Red = 20%+ above average · Amber = above average · kWh per month
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── Demand Response Screen ───────────────────────────────────────────────────
 
 function DemandResponseScreen({ ders, summary }) {
@@ -1542,136 +1865,10 @@ function DemandResponseScreen({ ders, summary }) {
 
       {/* ── Consumer Enrollment Tab ── */}
       {activeTab === "consumers" && (
-        <div>
-          <div className="row row-2" style={{ marginBottom: 16 }}>
-            <div className="card">
-              <div className="card-title">👥 Enrollment Summary</div>
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 10, marginBottom: 16 }}>
-                {[
-                  { label: "Total Consumers",  value: consumers?.total_consumers || 0,    color: "var(--text)" },
-                  { label: "Enrolled",          value: consumers?.enrolled_count || 0,     color: "var(--success)" },
-                  { label: "Total Flex (30%)",  value: `${((consumers?.total_enrolled_demand_kw||0)*0.3).toFixed(0)} kW`, color: "var(--cyan)" },
-                ].map(({ label, value, color }) => (
-                  <div key={label} style={{ background: "var(--bg)", borderRadius: 6, padding: "10px 12px", textAlign: "center" }}>
-                    <div style={{ fontSize: 10, color: "var(--text-muted)", marginBottom: 4 }}>{label}</div>
-                    <div style={{ fontWeight: 700, fontSize: 22, color }}>{value}</div>
-                  </div>
-                ))}
-              </div>
-              <div className="card-title">📊 Consumer Savings (INR)</div>
-              {consumers?.consumers && (
-                <SvgBarChart
-                  data={(consumers.consumers.filter(c => c.enrolled && c.total_savings_inr > 0)).map(c => ({
-                    name:    c.consumer_no.replace("VAR-",""),
-                    savings: c.total_savings_inr / 100,
-                    events:  c.events_participated * 10,
-                  }))}
-                  bars={[
-                    { key: "savings", label: "Savings ÷100 (INR)", color: "#10B981" },
-                    { key: "events",  label: "Events ×10",          color: "#8B5CF6" },
-                  ]}
-                  height={160}
-                />
-              )}
-            </div>
-
-            <div className="card">
-              <div className="card-title">📋 Billing System Data Fields</div>
-              <div style={{ fontSize: 12 }}>
-                {[
-                  ["Consumer Number",              "Unique ID from PuVVNL billing system",       "✅"],
-                  ["Name & Address",                "Consumer master data",                       "✅"],
-                  ["Contact Details",               "Mobile / email for DR notifications",        "✅"],
-                  ["Tariff Category",               "LT Commercial / Industrial / Residential",   "✅"],
-                  ["Contractual Demand (kVA)",      "Maximum sanctioned load",                    "✅"],
-                  ["Max Demand (kW)",               "Highest recorded demand (billing)",          "✅"],
-                  ["Avg Demand (kW)",               "Average demand from billing",                "✅"],
-                  ["Month-wise Consumption (kWh)",  "12-month energy history",                    "✅"],
-                  ["Voltage Level",                 "LT 415V / HT 11kV / 33kV",                  "✅"],
-                  ["DR Consent",                    "Voluntary enrollment agreement",             "✅"],
-                  ["Feeder / DT Assignment",        "Network topology from ADMS",                 "✅"],
-                ].map(([field, desc, status]) => (
-                  <div key={field} style={{ display: "flex", gap: 8, padding: "5px 0", borderBottom: "1px solid var(--border)", alignItems: "flex-start" }}>
-                    <span style={{ color: "var(--success)", flexShrink: 0 }}>{status}</span>
-                    <div style={{ flex: 1 }}>
-                      <span style={{ fontWeight: 600 }}>{field}</span>
-                      <span style={{ color: "var(--text-muted)", marginLeft: 6, fontSize: 10 }}>— {desc}</span>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
-
-          <div className="card">
-            <div className="card-title">📋 Consumer Registry — DR Enrollment Status</div>
-            <table>
-              <thead>
-                <tr>
-                  <th>Consumer No.</th><th>Name</th><th>Tariff</th><th>Avg Demand</th>
-                  <th>Max Demand</th><th>Feeder</th><th>Events</th>
-                  <th>Total Savings (INR)</th><th>Status</th>
-                </tr>
-              </thead>
-              <tbody>
-                {(consumers?.consumers || []).map(c => (
-                  <tr key={c.consumer_no}>
-                    <td style={{ fontFamily: "monospace", fontSize: 10 }}>{c.consumer_no}</td>
-                    <td style={{ fontSize: 11 }}>{c.name}</td>
-                    <td><span className="tag">{c.tariff_category}</span></td>
-                    <td>{c.avg_demand_kw} kW</td>
-                    <td>{c.max_demand_kw} kW</td>
-                    <td style={{ color: "var(--cyan)" }}>{c.feeder_id}</td>
-                    <td style={{ fontWeight: 600, color: c.events_participated > 0 ? "var(--success)" : "var(--text-muted)" }}>{c.events_participated}</td>
-                    <td style={{ fontWeight: 600, color: "var(--solar)" }}>
-                      {c.total_savings_inr > 0 ? `₹${c.total_savings_inr.toLocaleString()}` : "—"}
-                    </td>
-                    <td>
-                      <span className={`badge ${c.enrolled ? "badge-online" : "badge-offline"}`}>
-                        {c.enrolled ? "Enrolled" : "Not Enrolled"}
-                      </span>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-
-          <div className="card" style={{ marginTop: 16 }}>
-            <div className="card-title">📊 Month-wise Energy Consumption — Enrolled Consumers (kWh)</div>
-            <div style={{ overflowX: "auto" }}>
-              <table>
-                <thead>
-                  <tr>
-                    <th>Consumer</th>
-                    {["Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec","Jan","Feb","Mar"].map(m => <th key={m}>{m}</th>)}
-                    <th>Avg/Mo</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {(consumers?.consumers || []).filter(c => c.enrolled).map(c => {
-                    const avg = Math.round(c.monthly_consumption_kwh.reduce((s,v) => s+v, 0) / 12);
-                    return (
-                      <tr key={c.consumer_no}>
-                        <td style={{ fontSize: 10, fontWeight: 600 }}>{c.consumer_no}</td>
-                        {c.monthly_consumption_kwh.map((v, i) => (
-                          <td key={i} style={{ fontSize: 10, textAlign: "right",
-                            color: v > avg * 1.2 ? "var(--danger)" : v > avg ? "var(--warning)" : "var(--text)" }}>
-                            {v.toLocaleString()}
-                          </td>
-                        ))}
-                        <td style={{ fontWeight: 600, color: "var(--cyan)", fontSize: 11 }}>{avg.toLocaleString()}</td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-            <div style={{ fontSize: 10, color: "var(--text-muted)", marginTop: 6 }}>
-              Red = 20%+ above average · Amber = above average · kWh per month
-            </div>
-          </div>
-        </div>
+        <ConsumerEnrollmentPanel
+          consumers={consumers}
+          onRefresh={() => apiFetch("/api/dr/consumers").then(setConsumers)}
+        />
       )}
 
       {/* ── Cost-Benefit Analysis Tab ── */}

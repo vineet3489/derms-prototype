@@ -227,6 +227,100 @@ async def get_consumers(enrolled_only: bool = False):
     }
 
 
+@router.get("/consumers/lookup")
+async def lookup_consumer(consumer_no: str):
+    """
+    Simulate a billing system lookup by consumer number.
+    In production: queries PuVVNL MDMS / billing system API.
+    Returns master data for review before enrollment.
+    """
+    # Check if already in our registry
+    existing = next((c for c in _CONSUMERS if c["consumer_no"] == consumer_no), None)
+    if existing:
+        return {"found": True, "source": "DERMS Registry", "consumer": existing}
+
+    # Simulate a billing system hit for unknown consumer numbers
+    # In production this would call the actual billing API
+    if not consumer_no.startswith("VAR-"):
+        return {"found": False, "message": f"Consumer {consumer_no} not found in PuVVNL billing system."}
+
+    # Generate plausible billing data for demo
+    import hashlib
+    seed = int(hashlib.md5(consumer_no.encode()).hexdigest()[:8], 16)
+    rng  = random.Random(seed)
+    avg_demand = round(rng.uniform(8, 90), 1)
+    max_demand = round(avg_demand * rng.uniform(1.2, 1.5), 1)
+    tariffs    = ["LT Commercial", "LT Industrial", "LT Residential (Group)", "LT Religious"]
+    feeders    = ["FDR-01", "FDR-02", "FDR-03"]
+    mock = {
+        "consumer_no":               consumer_no,
+        "name":                      f"Consumer {consumer_no}",
+        "address":                   "Varanasi, Uttar Pradesh",
+        "contact":                   "+91-9XXXXXXXXX",
+        "tariff_category":           rng.choice(tariffs),
+        "voltage_level":             "LT (415V)",
+        "contractual_demand_kva":    round(max_demand * 1.1, 0),
+        "max_demand_kw":             max_demand,
+        "avg_demand_kw":             avg_demand,
+        "enrolled":                  False,
+        "enrollment_date":           None,
+        "feeder_id":                 rng.choice(feeders),
+        "dt_id":                     f"DT-VAR-0{rng.randint(200,700)}",
+        "events_participated":       0,
+        "total_savings_inr":         0,
+        "monthly_consumption_kwh":   [round(avg_demand * 720 * rng.uniform(0.8, 1.2)) for _ in range(12)],
+    }
+    return {"found": True, "source": "PuVVNL Billing System", "consumer": mock}
+
+
+@router.post("/consumers/{consumer_no}/enroll")
+async def enroll_consumer(consumer_no: str, body: dict = {}):
+    """
+    Enroll a consumer in the DR program.
+    If the consumer is not yet in the registry, add them from billing data.
+    Body (optional): consumer data fetched from billing lookup.
+    """
+    existing = next((c for c in _CONSUMERS if c["consumer_no"] == consumer_no), None)
+
+    if existing:
+        if existing["enrolled"]:
+            return {"status": "already_enrolled", "consumer_no": consumer_no,
+                    "message": f"{consumer_no} is already enrolled in the DR program."}
+        existing["enrolled"]        = True
+        existing["enrollment_date"] = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        return {"status": "enrolled", "consumer_no": consumer_no,
+                "message": f"{existing['name']} enrolled successfully in PUVVNL DR Program.",
+                "consumer": existing}
+
+    # New consumer — add from billing lookup data passed in body
+    if not body:
+        return {"status": "error", "message": "Consumer not found in registry. Provide billing data in request body."}
+
+    new_consumer = {**body, "enrolled": True,
+                    "enrollment_date": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
+                    "events_participated": 0, "total_savings_inr": 0}
+    _CONSUMERS.append(new_consumer)
+    return {"status": "registered_and_enrolled", "consumer_no": consumer_no,
+            "message": f"{new_consumer.get('name', consumer_no)} registered and enrolled in PUVVNL DR Program.",
+            "consumer": new_consumer}
+
+
+@router.post("/consumers/{consumer_no}/unenroll")
+async def unenroll_consumer(consumer_no: str):
+    """Remove a consumer from the DR program (soft unenroll — keeps record)."""
+    consumer = next((c for c in _CONSUMERS if c["consumer_no"] == consumer_no), None)
+    if not consumer:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail=f"Consumer {consumer_no} not found.")
+    if not consumer["enrolled"]:
+        return {"status": "not_enrolled", "message": f"{consumer_no} is not currently enrolled."}
+    consumer["enrolled"]        = False
+    consumer["enrollment_date"] = None
+    return {"status": "unenrolled", "consumer_no": consumer_no,
+            "message": f"{consumer['name']} unenrolled from the DR program.",
+            "consumer": consumer}
+
+
 @router.get("/cost-benefit")
 async def get_cost_benefit():
     """
