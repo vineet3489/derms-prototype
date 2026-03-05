@@ -149,12 +149,14 @@ app.add_middleware(
 from src.api.der_routes import router as der_router
 from src.api.adms_routes import router as adms_router
 from src.api.dashboard_routes import router as dashboard_router
+from src.api.dr_routes import router as dr_router
 from src.integrations.adms.simulator import router as adms_sim_router
 from src.integrations.ieee2030_5.server import router as ieee_router
 
 app.include_router(der_router)
 app.include_router(adms_router)
 app.include_router(dashboard_router)
+app.include_router(dr_router)
 app.include_router(adms_sim_router)
 app.include_router(ieee_router)
 

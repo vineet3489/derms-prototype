@@ -1274,16 +1274,22 @@ function DemandResponseScreen({ ders, summary }) {
   const [controls, setControls] = useState([]);
   const [drForm, setDrForm] = useState({ target_kw: 50, duration_min: 60, feeder_id: "", reason: "Peak Shaving" });
   const [drResult, setDrResult] = useState(null);
-  const [activeTab, setActiveTab] = useState("dispatch");
+  const [activeTab, setActiveTab] = useState("demand");
   const [submitting, setSubmitting] = useState(false);
+  const [demandData, setDemandData] = useState(null);
+  const [consumers, setConsumers] = useState(null);
+  const [cba, setCba] = useState(null);
 
   useEffect(() => {
     const load = () => {
       apiFetch("/api/ders/dispatch/dr-events").then(d => setDrEvents(d?.events || []));
       apiFetch("/api/ders/dispatch/der-controls").then(d => setControls(d?.controls || []));
+      apiFetch("/api/dr/demand-analysis").then(setDemandData);
+      apiFetch("/api/dr/consumers").then(setConsumers);
+      apiFetch("/api/dr/cost-benefit").then(setCba);
     };
     load();
-    const iv = setInterval(load, 10000);
+    const iv = setInterval(load, 30000);
     return () => clearInterval(iv);
   }, []);
 
@@ -1298,6 +1304,7 @@ function DemandResponseScreen({ ders, summary }) {
       setDrResult(result);
       apiFetch("/api/ders/dispatch/dr-events").then(d => setDrEvents(d?.events || []));
       apiFetch("/api/ders/dispatch/der-controls").then(d => setControls(d?.controls || []));
+      apiFetch("/api/dr/cost-benefit").then(setCba);
     } catch(e) { setDrResult({ error: e.message }); }
     finally { setSubmitting(false); }
   };
@@ -1307,7 +1314,6 @@ function DemandResponseScreen({ ders, summary }) {
   const activeEvents = drEvents.filter(e => e.status === "Active");
   const totalDispatchedKw = activeEvents.reduce((s,e) => s + (e.dispatched_kw||0), 0);
 
-  // Simulated historical events to demonstrate the log
   const historicalEvents = [
     { event_id: "DR-202603011430", reason: "Peak Shaving", target_kw: 75, dispatched_kw: 68.5, duration_min: 60, feeder_id: "FDR-02", dispatched_ders: ["BESS-01","BESS-04"], status: "Completed", created_at: "2026-03-01T14:30:00Z" },
     { event_id: "DR-202602281100", reason: "Voltage Regulation", target_kw: 40, dispatched_kw: 40.0, duration_min: 30, feeder_id: "FDR-01", dispatched_ders: ["BESS-02"], status: "Completed", created_at: "2026-02-28T11:00:00Z" },
@@ -1316,27 +1322,125 @@ function DemandResponseScreen({ ders, summary }) {
   const allEvents = [...drEvents, ...historicalEvents];
 
   const drPrograms = [
-    { name: "Peak Shaving",       trigger: "Feeder loading > 80%",              response: "Dispatch BESS, curtail EV chargers",       target: "Reduce 20–100 kW",  duration: "30–120 min", protocol: "IEEE 2030.5" },
-    { name: "Voltage Regulation", trigger: "Voltage > 245V or < 215V at DT",    response: "Curtail solar DERs at affected DT",        target: "Restore 230±5V",    duration: "10–60 min",  protocol: "IEEE 2030.5" },
-    { name: "Frequency Response", trigger: "Grid frequency < 49.8 Hz",           response: "BESS fast ramp-up within 1s",              target: "+12 kW fast dispatch", duration: "5–15 min", protocol: "IEEE 2030.5" },
-    { name: "Scheduled DR",       trigger: "PUVVNL / SLDC day-ahead schedule",   response: "Pre-charge BESS, schedule curtailment",    target: "Per schedule block", duration: "Per schedule", protocol: "OpenADR 2.0b" },
+    { name: "Peak Shaving",       trigger: "Feeder loading > 80%",              response: "Dispatch BESS, curtail EV chargers",    target: "Reduce 20–100 kW",     duration: "30–120 min",   protocol: "IEEE 2030.5" },
+    { name: "Voltage Regulation", trigger: "Voltage > 245V or < 215V at DT",    response: "Curtail solar DERs at affected DT",     target: "Restore 230±5V",       duration: "10–60 min",    protocol: "IEEE 2030.5" },
+    { name: "Frequency Response", trigger: "Grid frequency < 49.8 Hz",           response: "BESS fast ramp-up within 1s",           target: "+12 kW fast dispatch", duration: "5–15 min",     protocol: "IEEE 2030.5" },
+    { name: "Scheduled DR",       trigger: "PUVVNL / SLDC day-ahead schedule",   response: "Pre-charge BESS, schedule curtailment", target: "Per schedule block",   duration: "Per schedule", protocol: "OpenADR 2.0b" },
+  ];
+
+  const tabs = [
+    ["demand",    "📊 Demand Analysis"],
+    ["dispatch",  "⚡ Dispatch"],
+    ["consumers", "👥 Consumer Enrollment"],
+    ["cba",       "💰 Cost-Benefit"],
+    ["history",   "📋 Event History"],
+    ["program",   "📜 DR Programs"],
   ];
 
   return (
     <div>
-      <div className="kpi-grid" style={{ gridTemplateColumns: "repeat(4,1fr)" }}>
-        <KpiCard label="Active DR Events"   value={activeEvents.length}           sub={activeEvents.length ? "In progress now" : "No active events"} color={activeEvents.length ? "var(--warning)" : "var(--success)"} icon="📉" />
-        <KpiCard label="kW Dispatched"      value={totalDispatchedKw.toFixed(1)}  sub="Via active DR events"     color="var(--purple)" icon="⚡" />
-        <KpiCard label="BESS Available"     value={totalAvailKw.toFixed(1)+"kW"}  sub={`${bess.length} storage units`} color="var(--success)" icon="🔋" />
-        <KpiCard label="Active DERControls" value={controls.length}               sub="IEEE 2030.5 signals"      color={controls.length > 0 ? "var(--cyan)" : "var(--text-muted)"} icon="📡" />
+      <div className="kpi-grid" style={{ gridTemplateColumns: "repeat(5,1fr)" }}>
+        <KpiCard label="Active DR Events"   value={activeEvents.length}            sub={activeEvents.length ? "In progress now" : "No active events"} color={activeEvents.length ? "var(--warning)" : "var(--success)"} icon="📉" />
+        <KpiCard label="kW Dispatched"      value={totalDispatchedKw.toFixed(1)}   sub="Via active DR events"      color="var(--purple)" icon="⚡" />
+        <KpiCard label="BESS Available"     value={totalAvailKw.toFixed(1)+"kW"}   sub={`${bess.length} storage units`} color="var(--success)" icon="🔋" />
+        <KpiCard label="Enrolled Consumers" value={consumers?.enrolled_count || 0} sub={`of ${consumers?.total_consumers || 0} registered`} color="var(--cyan)" icon="👥" />
+        <KpiCard label="Total DR Savings"   value={"₹"+(consumers?.total_savings_inr || 0).toLocaleString()} sub="Incentives paid to consumers" color="var(--solar)" icon="💰" />
       </div>
 
       <div className="tabs">
-        {[["dispatch","⚡ Dispatch"],["history","📋 Event History"],["program","📜 DR Programs"]].map(([id,label]) => (
+        {tabs.map(([id, label]) => (
           <div key={id} className={`tab ${activeTab===id?"active":""}`} onClick={() => setActiveTab(id)}>{label}</div>
         ))}
       </div>
 
+      {/* ── Power Demand Analysis Tab ── */}
+      {activeTab === "demand" && (
+        <div>
+          {demandData?.dr_recommendation?.recommended && (
+            <div style={{ background: "rgba(239,68,68,0.12)", border: "1px solid var(--danger)", borderRadius: 8, padding: "12px 16px", marginBottom: 16, display: "flex", alignItems: "center", gap: 12 }}>
+              <span style={{ fontSize: 20 }}>⚠️</span>
+              <div style={{ flex: 1, fontSize: 13 }}>
+                <div style={{ fontWeight: 600, color: "var(--danger)" }}>DR Event Recommended</div>
+                <div style={{ color: "var(--text-muted)" }}>{demandData.dr_recommendation.message}</div>
+              </div>
+              <div style={{ fontSize: 12, textAlign: "right" }}>
+                <div style={{ color: "var(--warning)", fontWeight: 600 }}>Shortfall: {demandData.dr_recommendation.shortfall_kw} kW</div>
+                <div style={{ color: "var(--text-muted)" }}>Available flex: {demandData.dr_recommendation.available_flex_kw} kW</div>
+              </div>
+            </div>
+          )}
+          <div className="row row-2">
+            <div className="card">
+              <div className="card-title">📈 24-Hour Demand Forecast vs SLDC Schedule</div>
+              {demandData?.hourly && (
+                <SvgLineChart
+                  data={demandData.hourly.map(d => ({
+                    label: d.hour,
+                    demand_kw: Math.round(d.demand_mw * 1000),
+                    sldc_kw:   Math.round(d.sldc_avail_mw * 1000),
+                    shortfall: d.shortfall_kw,
+                  }))}
+                  lines={[
+                    { key: "demand_kw", label: "Demand (kW)",        color: "#EF4444", fill: "#EF4444" },
+                    { key: "sldc_kw",   label: "SLDC Available (kW)", color: "#60A5FA", dash: "5 3" },
+                    { key: "shortfall", label: "Shortfall (kW)",      color: "#F59E0B", dash: "3 3" },
+                  ]}
+                  height={220}
+                />
+              )}
+              <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 6, display: "flex", gap: 16 }}>
+                <span>System peak: {(demandData?.system_peak_mw||0).toFixed(2)} MW</span>
+                <span>Max shortfall: {(demandData?.max_shortfall_kw||0).toFixed(1)} kW</span>
+                <span>DR threshold: {demandData?.dr_threshold_pct||5}% of demand</span>
+              </div>
+            </div>
+
+            <div className="card">
+              <div className="card-title">⏰ Shortfall Hours & DR Triggers</div>
+              <table>
+                <thead><tr><th>Hour (IST)</th><th>Demand (kW)</th><th>SLDC (kW)</th><th>Shortfall (kW)</th><th>DR Trigger</th></tr></thead>
+                <tbody>
+                  {(demandData?.hourly || []).filter(h => h.shortfall_kw > 0 || h.trigger_dr).map(h => (
+                    <tr key={h.hour}>
+                      <td style={{ fontWeight: 600 }}>{h.hour}</td>
+                      <td>{Math.round(h.demand_mw * 1000)}</td>
+                      <td>{Math.round(h.sldc_avail_mw * 1000)}</td>
+                      <td style={{ color: h.shortfall_kw > 0 ? "var(--danger)" : "var(--text-muted)", fontWeight: h.shortfall_kw > 0 ? 600 : 400 }}>
+                        {h.shortfall_kw.toFixed(1)}
+                      </td>
+                      <td>
+                        {h.trigger_dr
+                          ? <span className="badge badge-critical">⚡ Yes</span>
+                          : <span style={{ color: "var(--text-muted)", fontSize: 10 }}>—</span>}
+                      </td>
+                    </tr>
+                  ))}
+                  {(demandData?.hourly || []).filter(h => h.shortfall_kw > 0 || h.trigger_dr).length === 0 && (
+                    <tr><td colSpan={5} style={{ textAlign: "center", color: "var(--success)", padding: 16 }}>No demand shortfall predicted</td></tr>
+                  )}
+                </tbody>
+              </table>
+              <div style={{ marginTop: 14, background: "var(--bg)", borderRadius: 8, padding: 12, fontSize: 12 }}>
+                <div style={{ fontWeight: 600, marginBottom: 8 }}>📡 SLDC Integration</div>
+                {[
+                  ["Data Source",          "UP SLDC Day-Ahead Schedule"],
+                  ["Update Frequency",     "Every 15 minutes"],
+                  ["Forecast Horizon",     "24 hours ahead"],
+                  ["Shortfall Threshold",  `${demandData?.dr_threshold_pct||5}% of forecast demand`],
+                  ["Auto-trigger",         "DR event recommended when shortfall ≥ threshold"],
+                ].map(([k,v]) => (
+                  <div key={k} style={{ display: "flex", justifyContent: "space-between", padding: "3px 0", borderBottom: "1px solid var(--border)" }}>
+                    <span style={{ color: "var(--text-muted)" }}>{k}</span>
+                    <span style={{ fontWeight: 600 }}>{v}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Dispatch Tab ── */}
       {activeTab === "dispatch" && (
         <div className="row row-2">
           <div className="card">
@@ -1414,7 +1518,6 @@ function DemandResponseScreen({ ders, summary }) {
                 </tbody>
               </table>
             </div>
-
             {controls.length > 0 && (
               <div className="card">
                 <div className="card-title">📡 Active DERControls (IEEE 2030.5)</div>
@@ -1437,6 +1540,247 @@ function DemandResponseScreen({ ders, summary }) {
         </div>
       )}
 
+      {/* ── Consumer Enrollment Tab ── */}
+      {activeTab === "consumers" && (
+        <div>
+          <div className="row row-2" style={{ marginBottom: 16 }}>
+            <div className="card">
+              <div className="card-title">👥 Enrollment Summary</div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 10, marginBottom: 16 }}>
+                {[
+                  { label: "Total Consumers",  value: consumers?.total_consumers || 0,    color: "var(--text)" },
+                  { label: "Enrolled",          value: consumers?.enrolled_count || 0,     color: "var(--success)" },
+                  { label: "Total Flex (30%)",  value: `${((consumers?.total_enrolled_demand_kw||0)*0.3).toFixed(0)} kW`, color: "var(--cyan)" },
+                ].map(({ label, value, color }) => (
+                  <div key={label} style={{ background: "var(--bg)", borderRadius: 6, padding: "10px 12px", textAlign: "center" }}>
+                    <div style={{ fontSize: 10, color: "var(--text-muted)", marginBottom: 4 }}>{label}</div>
+                    <div style={{ fontWeight: 700, fontSize: 22, color }}>{value}</div>
+                  </div>
+                ))}
+              </div>
+              <div className="card-title">📊 Consumer Savings (INR)</div>
+              {consumers?.consumers && (
+                <SvgBarChart
+                  data={(consumers.consumers.filter(c => c.enrolled && c.total_savings_inr > 0)).map(c => ({
+                    name:    c.consumer_no.replace("VAR-",""),
+                    savings: c.total_savings_inr / 100,
+                    events:  c.events_participated * 10,
+                  }))}
+                  bars={[
+                    { key: "savings", label: "Savings ÷100 (INR)", color: "#10B981" },
+                    { key: "events",  label: "Events ×10",          color: "#8B5CF6" },
+                  ]}
+                  height={160}
+                />
+              )}
+            </div>
+
+            <div className="card">
+              <div className="card-title">📋 Billing System Data Fields</div>
+              <div style={{ fontSize: 12 }}>
+                {[
+                  ["Consumer Number",              "Unique ID from PuVVNL billing system",       "✅"],
+                  ["Name & Address",                "Consumer master data",                       "✅"],
+                  ["Contact Details",               "Mobile / email for DR notifications",        "✅"],
+                  ["Tariff Category",               "LT Commercial / Industrial / Residential",   "✅"],
+                  ["Contractual Demand (kVA)",      "Maximum sanctioned load",                    "✅"],
+                  ["Max Demand (kW)",               "Highest recorded demand (billing)",          "✅"],
+                  ["Avg Demand (kW)",               "Average demand from billing",                "✅"],
+                  ["Month-wise Consumption (kWh)",  "12-month energy history",                    "✅"],
+                  ["Voltage Level",                 "LT 415V / HT 11kV / 33kV",                  "✅"],
+                  ["DR Consent",                    "Voluntary enrollment agreement",             "✅"],
+                  ["Feeder / DT Assignment",        "Network topology from ADMS",                 "✅"],
+                ].map(([field, desc, status]) => (
+                  <div key={field} style={{ display: "flex", gap: 8, padding: "5px 0", borderBottom: "1px solid var(--border)", alignItems: "flex-start" }}>
+                    <span style={{ color: "var(--success)", flexShrink: 0 }}>{status}</span>
+                    <div style={{ flex: 1 }}>
+                      <span style={{ fontWeight: 600 }}>{field}</span>
+                      <span style={{ color: "var(--text-muted)", marginLeft: 6, fontSize: 10 }}>— {desc}</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          <div className="card">
+            <div className="card-title">📋 Consumer Registry — DR Enrollment Status</div>
+            <table>
+              <thead>
+                <tr>
+                  <th>Consumer No.</th><th>Name</th><th>Tariff</th><th>Avg Demand</th>
+                  <th>Max Demand</th><th>Feeder</th><th>Events</th>
+                  <th>Total Savings (INR)</th><th>Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {(consumers?.consumers || []).map(c => (
+                  <tr key={c.consumer_no}>
+                    <td style={{ fontFamily: "monospace", fontSize: 10 }}>{c.consumer_no}</td>
+                    <td style={{ fontSize: 11 }}>{c.name}</td>
+                    <td><span className="tag">{c.tariff_category}</span></td>
+                    <td>{c.avg_demand_kw} kW</td>
+                    <td>{c.max_demand_kw} kW</td>
+                    <td style={{ color: "var(--cyan)" }}>{c.feeder_id}</td>
+                    <td style={{ fontWeight: 600, color: c.events_participated > 0 ? "var(--success)" : "var(--text-muted)" }}>{c.events_participated}</td>
+                    <td style={{ fontWeight: 600, color: "var(--solar)" }}>
+                      {c.total_savings_inr > 0 ? `₹${c.total_savings_inr.toLocaleString()}` : "—"}
+                    </td>
+                    <td>
+                      <span className={`badge ${c.enrolled ? "badge-online" : "badge-offline"}`}>
+                        {c.enrolled ? "Enrolled" : "Not Enrolled"}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          <div className="card" style={{ marginTop: 16 }}>
+            <div className="card-title">📊 Month-wise Energy Consumption — Enrolled Consumers (kWh)</div>
+            <div style={{ overflowX: "auto" }}>
+              <table>
+                <thead>
+                  <tr>
+                    <th>Consumer</th>
+                    {["Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec","Jan","Feb","Mar"].map(m => <th key={m}>{m}</th>)}
+                    <th>Avg/Mo</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(consumers?.consumers || []).filter(c => c.enrolled).map(c => {
+                    const avg = Math.round(c.monthly_consumption_kwh.reduce((s,v) => s+v, 0) / 12);
+                    return (
+                      <tr key={c.consumer_no}>
+                        <td style={{ fontSize: 10, fontWeight: 600 }}>{c.consumer_no}</td>
+                        {c.monthly_consumption_kwh.map((v, i) => (
+                          <td key={i} style={{ fontSize: 10, textAlign: "right",
+                            color: v > avg * 1.2 ? "var(--danger)" : v > avg ? "var(--warning)" : "var(--text)" }}>
+                            {v.toLocaleString()}
+                          </td>
+                        ))}
+                        <td style={{ fontWeight: 600, color: "var(--cyan)", fontSize: 11 }}>{avg.toLocaleString()}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+            <div style={{ fontSize: 10, color: "var(--text-muted)", marginTop: 6 }}>
+              Red = 20%+ above average · Amber = above average · kWh per month
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Cost-Benefit Analysis Tab ── */}
+      {activeTab === "cba" && cba && (
+        <div>
+          <div className="row" style={{ gridTemplateColumns: "repeat(5,1fr)", marginBottom: 16 }}>
+            {[
+              { label: "DR Events",      value: cba.summary.total_events,                                   color: "var(--text)",    icon: "📋" },
+              { label: "Energy Saved",   value: `${cba.summary.total_energy_saved_kwh.toFixed(1)} kWh`,    color: "var(--solar)",   icon: "⚡" },
+              { label: "Cost Avoided",   value: `₹${cba.summary.total_cost_avoided_inr.toFixed(0)}`,       color: "var(--success)", icon: "💵" },
+              { label: "Incentives",     value: `₹${cba.summary.total_incentives_paid_inr.toFixed(0)}`,    color: "var(--warning)", icon: "🎁" },
+              { label: "Net Benefit",    value: `₹${cba.summary.net_benefit_inr.toFixed(0)}`,              color: cba.summary.net_benefit_inr > 0 ? "var(--success)" : "var(--danger)", icon: "📈" },
+            ].map(({ label, value, color, icon }) => (
+              <KpiCard key={label} label={label} value={value} color={color} icon={icon} />
+            ))}
+          </div>
+
+          <div className="row row-2">
+            <div className="card">
+              <div className="card-title">💰 Per-Event Cost-Benefit Analysis</div>
+              <table>
+                <thead>
+                  <tr>
+                    <th>Event ID</th><th>Reason</th><th>Energy (kWh)</th>
+                    <th>Cost Avoided (₹)</th><th>Incentives (₹)</th><th>Net (₹)</th>
+                    <th>Consumers</th><th>Avg Saving/Consumer (₹)</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {cba.events.map((e, i) => (
+                    <tr key={e.event_id || i}>
+                      <td style={{ fontFamily: "monospace", fontSize: 10 }}>{e.event_id}</td>
+                      <td><span className="tag">{e.reason}</span></td>
+                      <td style={{ color: "var(--solar)" }}>{e.energy_saved_kwh}</td>
+                      <td style={{ color: "var(--success)", fontWeight: 600 }}>₹{e.cost_avoided_inr.toLocaleString()}</td>
+                      <td style={{ color: "var(--warning)" }}>₹{e.incentives_paid_inr.toLocaleString()}</td>
+                      <td style={{ fontWeight: 600, color: e.net_benefit_inr > 0 ? "var(--success)" : "var(--danger)" }}>
+                        ₹{e.net_benefit_inr.toLocaleString()}
+                      </td>
+                      <td>{e.consumers_participated}</td>
+                      <td style={{ color: "var(--cyan)" }}>₹{e.avg_saving_per_consumer_inr.toLocaleString()}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              <div style={{ marginTop: 14, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, fontSize: 12 }}>
+                {[
+                  ["Peak Tariff Rate",    `₹${cba.summary.peak_tariff_rate}/kWh`],
+                  ["DR Incentive Rate",   `₹${cba.summary.incentive_rate}/kWh`],
+                  ["Benefit-Cost Ratio",  `${cba.summary.benefit_cost_ratio}x`],
+                  ["Total kWh Saved",     `${cba.summary.total_energy_saved_kwh.toFixed(1)} kWh`],
+                ].map(([k,v]) => (
+                  <div key={k} style={{ background: "var(--bg)", borderRadius: 6, padding: "8px 12px" }}>
+                    <div style={{ fontSize: 10, color: "var(--text-muted)" }}>{k}</div>
+                    <div style={{ fontWeight: 600, color: "var(--cyan)" }}>{v}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="card">
+              <div className="card-title">👤 Per-Consumer Savings Breakdown</div>
+              <table>
+                <thead>
+                  <tr>
+                    <th>Consumer</th><th>Name</th><th>Events</th>
+                    <th>Total Savings (₹)</th><th>Avg / Event (₹)</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(cba.consumer_savings || []).sort((a,b) => b.total_savings_inr - a.total_savings_inr).map(c => (
+                    <tr key={c.consumer_no}>
+                      <td style={{ fontFamily: "monospace", fontSize: 10 }}>{c.consumer_no}</td>
+                      <td style={{ fontSize: 11 }}>{c.name}</td>
+                      <td style={{ fontWeight: 600, color: "var(--success)" }}>{c.events_participated}</td>
+                      <td>
+                        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                          <div style={{ width: 50, height: 6, background: "var(--bg)", borderRadius: 3 }}>
+                            <div style={{ width: `${Math.min(100, c.total_savings_inr / 130)}%`, height: "100%", borderRadius: 3, background: "var(--success)" }} />
+                          </div>
+                          <span style={{ fontWeight: 600, color: "var(--solar)" }}>₹{c.total_savings_inr.toLocaleString()}</span>
+                        </div>
+                      </td>
+                      <td style={{ color: "var(--cyan)", fontWeight: 600 }}>₹{c.avg_saving_per_event_inr.toLocaleString()}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              <div style={{ marginTop: 16, background: "var(--bg)", borderRadius: 8, padding: 12 }}>
+                <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 8, color: "var(--purple)" }}>📊 CBA Methodology</div>
+                {[
+                  ["Baseline",          "Average demand before DR program (PuVVNL billing data)"],
+                  ["Cost Avoided",      `Peak tariff × kWh reduced (₹${cba.summary.peak_tariff_rate}/kWh)`],
+                  ["Consumer Incentive",`₹${cba.summary.incentive_rate}/kWh × kWh reduction per consumer`],
+                  ["Net Benefit",       "Cost Avoided − Incentives Paid − Admin Costs"],
+                  ["Savings Tracking",  "Per-consumer metering via IEEE 2030.5 MirrorUsagePoint"],
+                ].map(([k,v]) => (
+                  <div key={k} style={{ display: "flex", gap: 8, marginBottom: 6, fontSize: 11 }}>
+                    <span style={{ color: "var(--success)", flexShrink: 0 }}>→</span>
+                    <div><span style={{ fontWeight: 600 }}>{k}:</span> <span style={{ color: "var(--text-muted)" }}>{v}</span></div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Event History Tab ── */}
       {activeTab === "history" && (
         <div className="card">
           <div className="card-title">📋 DR Event History</div>
@@ -1497,21 +1841,22 @@ function DemandResponseScreen({ ders, summary }) {
         </div>
       )}
 
+      {/* ── DR Programs Tab ── */}
       {activeTab === "program" && (
         <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
           <div className="card">
             <div className="card-title">📜 PUVVNL DR Program Configuration</div>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 10, marginBottom: 4, fontSize: 12 }}>
               {[
-                { label: "Program Authority",       value: "PUVVNL / UPERC" },
-                { label: "Feeder Loading Trigger",  value: "> 80% loading" },
-                { label: "Overvoltage Trigger",     value: "> 245V at DT" },
-                { label: "Undervoltage Trigger",    value: "< 215V at DT" },
-                { label: "Min Response Time",       value: "1 second (BESS)" },
-                { label: "Max Event Duration",      value: "120 minutes" },
-                { label: "DER Control Protocol",    value: "IEEE 2030.5 DERControl" },
-                { label: "Dispatch Signal Protocol",value: "OpenADR 2.0b" },
-                { label: "Min BESS SoC Required",   value: "> 20% SoC" },
+                { label: "Program Authority",        value: "PUVVNL / UPERC" },
+                { label: "Feeder Loading Trigger",   value: "> 80% loading" },
+                { label: "Overvoltage Trigger",      value: "> 245V at DT" },
+                { label: "Undervoltage Trigger",     value: "< 215V at DT" },
+                { label: "Min Response Time",        value: "1 second (BESS)" },
+                { label: "Max Event Duration",       value: "120 minutes" },
+                { label: "DER Control Protocol",     value: "IEEE 2030.5 DERControl" },
+                { label: "Dispatch Signal Protocol", value: "OpenADR 2.0b" },
+                { label: "Min BESS SoC Required",    value: "> 20% SoC" },
               ].map(({label, value}) => (
                 <div key={label} style={{ background: "var(--bg)", borderRadius: 6, padding: "8px 12px" }}>
                   <div style={{ fontSize: 10, color: "var(--text-muted)", marginBottom: 2 }}>{label}</div>
@@ -1562,11 +1907,12 @@ function DemandResponseScreen({ ders, summary }) {
               <div className="card-title">📡 Auto-DR Trigger Rules</div>
               <div style={{ fontSize: 12 }}>
                 {[
-                  { trigger: "Feeder Overloading",  threshold: "≥ 80% loading",        action: "Auto-curtail solar DERs",      status: "Active" },
-                  { trigger: "Voltage High",         threshold: "> 245V (nom. 230V)",    action: "Curtail solar at DT",          status: "Active" },
-                  { trigger: "Voltage Low",          threshold: "< 215V (nom. 230V)",    action: "Alert + BESS discharge",       status: "Active" },
-                  { trigger: "Hosting Capacity",     threshold: "≥ 80% HC used",         action: "Alert DISCOM",                 status: "Active" },
-                  { trigger: "Frequency Drop",       threshold: "< 49.8 Hz",             action: "BESS fast ramp",               status: "Planned" },
+                  { trigger: "Feeder Overloading", threshold: "≥ 80% loading",        action: "Auto-curtail solar DERs",    status: "Active" },
+                  { trigger: "Voltage High",        threshold: "> 245V (nom. 230V)",    action: "Curtail solar at DT",        status: "Active" },
+                  { trigger: "Voltage Low",         threshold: "< 215V (nom. 230V)",    action: "Alert + BESS discharge",     status: "Active" },
+                  { trigger: "SLDC Shortfall",      threshold: "≥ 5% demand shortfall", action: "Recommend DR Event",         status: "Active" },
+                  { trigger: "Hosting Capacity",    threshold: "≥ 80% HC used",         action: "Alert DISCOM",               status: "Active" },
+                  { trigger: "Frequency Drop",      threshold: "< 49.8 Hz",             action: "BESS fast ramp",             status: "Planned" },
                 ].map((r, i) => (
                   <div key={i} style={{ display: "flex", gap: 10, padding: "6px 0", borderBottom: "1px solid var(--border)", alignItems: "flex-start" }}>
                     <span style={{ color: r.status==="Active"?"var(--success)":"var(--text-muted)", fontSize: 14, flexShrink: 0, marginTop: 2 }}>●</span>
