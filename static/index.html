@@ -2192,6 +2192,7 @@ function App() {
     { id: "control",          icon: "🎛️", label: "Control & Optimization" },
     { id: "analytics", icon: "🤖", label: "Data Analytics" },
     { id: "adms",      icon: "🏭", label: "ADMS / CIM" },
+    { id: "__market__", icon: "🌐", label: "L&T Market Portal ↗" },
   ];
 
   return (
@@ -2203,7 +2204,7 @@ function App() {
         </div>
         <div className="nav">
           {navItems.map(n => (
-            <div key={n.id} className={`nav-item ${screen === n.id ? "active" : ""}`} onClick={() => setScreen(n.id)}>
+            <div key={n.id} className={`nav-item ${screen === n.id ? "active" : ""}`} onClick={() => n.id === "__market__" ? window.open("/market", "_blank") : setScreen(n.id)} style={n.id==="__market__"?{marginTop:8,borderTop:"1px solid var(--border)",paddingTop:14}:{}}>
               <span>{n.icon}</span>
               <span>{n.label}</span>
               {n.id === "dashboard" && alertCount > 0 && <span className="nav-badge">{alertCount}</span>}

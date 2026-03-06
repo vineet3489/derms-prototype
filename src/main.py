@@ -113,6 +113,7 @@ async def lifespan(app: FastAPI):
     logger.info(f" IEEE 2030.5:      http://localhost:{settings.port}/api/2030.5/dcap")
     logger.info(f" ADMS Simulator:   http://localhost:{settings.port}/sim/adms/status")
     logger.info(f" Dashboard:        http://localhost:{settings.port}/ui")
+    logger.info(f" Market Portal:    http://localhost:{settings.port}/market")
     logger.info(f" API Docs:         http://localhost:{settings.port}/docs")
     logger.info("=" * 60)
 
@@ -150,6 +151,7 @@ from src.api.der_routes import router as der_router
 from src.api.adms_routes import router as adms_router
 from src.api.dashboard_routes import router as dashboard_router
 from src.api.dr_routes import router as dr_router
+from src.api.market_routes import router as market_router
 from src.integrations.adms.simulator import router as adms_sim_router
 from src.integrations.ieee2030_5.server import router as ieee_router
 
@@ -157,6 +159,7 @@ app.include_router(der_router)
 app.include_router(adms_router)
 app.include_router(dashboard_router)
 app.include_router(dr_router)
+app.include_router(market_router)
 app.include_router(adms_sim_router)
 app.include_router(ieee_router)
 
@@ -177,6 +180,16 @@ async def dashboard():
     return HTMLResponse("<h1>Dashboard not found</h1>")
 
 
+@app.get("/market", response_class=HTMLResponse)
+async def market_portal():
+    """Serve the L&T Neural Grid Platform market portal."""
+    market_path = os.path.join(static_dir, "market.html")
+    if os.path.exists(market_path):
+        with open(market_path) as f:
+            return HTMLResponse(f.read())
+    return HTMLResponse("<h1>Market portal not found</h1>")
+
+
 @app.get("/")
 async def root():
     return {
@@ -188,10 +201,12 @@ async def root():
         },
         "endpoints": {
             "dashboard": "/ui",
+            "market_portal": "/market",
             "api_docs": "/docs",
             "ieee2030_5": "/api/2030.5/dcap",
             "adms_sim": "/sim/adms/status",
             "fleet_summary": "/api/dashboard/summary",
+            "market_status": "/api/market/status",
         },
     }
 

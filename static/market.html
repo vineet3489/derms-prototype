@@ -1,0 +1,1262 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>L&T Neural Grid Platform — Flexibility Energy Market</title>
+<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<style>
+  :root {
+    --lt-red: #C8202F;
+    --lt-navy: #1E3A5F;
+    --lt-navy-light: #264a77;
+    --bg: #070C18;
+    --bg2: #0D1525;
+    --bg3: #111d35;
+    --border: #1e2e4a;
+    --text: #e2e8f0;
+    --muted: #7a8fab;
+    --green: #22c55e;
+    --amber: #f59e0b;
+    --red: #ef4444;
+    --cyan: #06b6d4;
+    --purple: #8b5cf6;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--text); font-family: 'Segoe UI', system-ui, sans-serif; display: flex; min-height: 100vh; }
+
+  /* ── Sidebar ── */
+  #sidebar {
+    width: 240px; min-width: 240px; background: var(--bg2); border-right: 1px solid var(--border);
+    display: flex; flex-direction: column; position: fixed; top: 0; left: 0; bottom: 0; z-index: 100;
+  }
+  .logo-area {
+    padding: 20px 18px 16px;
+    border-bottom: 1px solid var(--border);
+  }
+  .logo-lt {
+    display: flex; align-items: center; gap: 10px; margin-bottom: 8px;
+  }
+  .logo-lt svg { width: 42px; height: 42px; }
+  .logo-name { font-size: 13px; font-weight: 700; color: #fff; line-height: 1.2; }
+  .logo-sub  { font-size: 10px; color: var(--muted); letter-spacing: 0.05em; }
+  .logo-badge {
+    display: inline-block; background: var(--lt-red); color: #fff;
+    font-size: 9px; font-weight: 700; padding: 2px 7px; border-radius: 10px;
+    letter-spacing: 0.08em; margin-top: 4px;
+  }
+  nav { flex: 1; overflow-y: auto; padding: 10px 0; }
+  .nav-section { font-size: 9px; font-weight: 700; color: var(--muted); letter-spacing: 0.12em; padding: 10px 18px 4px; }
+  .nav-item {
+    display: flex; align-items: center; gap: 10px; padding: 9px 18px;
+    cursor: pointer; font-size: 13px; color: var(--muted); border-left: 3px solid transparent;
+    transition: all 0.15s;
+  }
+  .nav-item:hover { color: var(--text); background: rgba(255,255,255,0.04); }
+  .nav-item.active { color: #fff; background: rgba(200,32,47,0.12); border-left-color: var(--lt-red); font-weight: 600; }
+  .nav-icon { width: 18px; text-align: center; font-size: 15px; }
+  .sidebar-footer {
+    padding: 14px 18px; border-top: 1px solid var(--border);
+    font-size: 10px; color: var(--muted); line-height: 1.6;
+  }
+
+  /* ── Main ── */
+  #main { margin-left: 240px; flex: 1; display: flex; flex-direction: column; min-height: 100vh; }
+  .topbar {
+    background: var(--bg2); border-bottom: 1px solid var(--border);
+    padding: 12px 28px; display: flex; align-items: center; justify-content: space-between;
+    position: sticky; top: 0; z-index: 50;
+  }
+  .topbar-title { font-size: 16px; font-weight: 600; color: #fff; }
+  .topbar-meta { font-size: 12px; color: var(--muted); }
+  .live-dot { display: inline-block; width: 8px; height: 8px; background: var(--green); border-radius: 50%; margin-right: 6px; animation: pulse 2s infinite; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
+  .page { padding: 24px 28px; flex: 1; }
+
+  /* ── Cards ── */
+  .card { background: var(--bg2); border: 1px solid var(--border); border-radius: 10px; padding: 20px; }
+  .card-sm { background: var(--bg2); border: 1px solid var(--border); border-radius: 10px; padding: 14px 18px; }
+  .card-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
+  .card-title { font-size: 13px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; }
+  .card-val { font-size: 28px; font-weight: 700; color: #fff; }
+  .card-sub { font-size: 11px; color: var(--muted); margin-top: 2px; }
+
+  /* ── KPI Grid ── */
+  .kpi-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 14px; margin-bottom: 22px; }
+  .kpi { background: var(--bg2); border: 1px solid var(--border); border-radius: 10px; padding: 16px 20px; }
+  .kpi-label { font-size: 10px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 6px; }
+  .kpi-value { font-size: 26px; font-weight: 700; color: #fff; }
+  .kpi-unit  { font-size: 12px; color: var(--muted); margin-left: 4px; }
+  .kpi-note  { font-size: 10px; color: var(--muted); margin-top: 3px; }
+  .kpi-accent-red   { border-top: 3px solid var(--lt-red); }
+  .kpi-accent-navy  { border-top: 3px solid var(--cyan); }
+  .kpi-accent-green { border-top: 3px solid var(--green); }
+  .kpi-accent-amber { border-top: 3px solid var(--amber); }
+  .kpi-accent-purple{ border-top: 3px solid var(--purple); }
+
+  /* ── Grid Layout ── */
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+  .grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 18px; }
+  .col-span-2 { grid-column: span 2; }
+
+  /* ── Tables ── */
+  table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  th { text-align: left; padding: 8px 12px; background: var(--bg3); color: var(--muted); font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; border-bottom: 1px solid var(--border); }
+  td { padding: 9px 12px; border-bottom: 1px solid rgba(255,255,255,0.05); }
+  tr:last-child td { border-bottom: none; }
+  tr:hover td { background: rgba(255,255,255,0.025); }
+
+  /* ── Badges ── */
+  .badge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 10px; font-weight: 600; }
+  .badge-green  { background: rgba(34,197,94,0.15);  color: var(--green); }
+  .badge-amber  { background: rgba(245,158,11,0.15); color: var(--amber); }
+  .badge-red    { background: rgba(239,68,68,0.15);  color: var(--red); }
+  .badge-blue   { background: rgba(6,182,212,0.12);  color: var(--cyan); }
+  .badge-purple { background: rgba(139,92,246,0.15); color: var(--purple); }
+  .badge-navy   { background: rgba(30,58,95,0.5);    color: #93c5fd; }
+
+  /* ── Buttons ── */
+  .btn { padding: 8px 16px; border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer; border: none; transition: 0.15s; }
+  .btn-primary  { background: var(--lt-red); color: #fff; }
+  .btn-primary:hover { background: #a81827; }
+  .btn-secondary{ background: var(--lt-navy); color: #fff; }
+  .btn-secondary:hover { background: var(--lt-navy-light); }
+  .btn-ghost { background: transparent; color: var(--muted); border: 1px solid var(--border); }
+  .btn-ghost:hover { color: var(--text); border-color: var(--muted); }
+  .btn-sm { padding: 5px 10px; font-size: 11px; }
+  .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+  /* ── Forms ── */
+  .form-group { margin-bottom: 12px; }
+  .form-label { display: block; font-size: 11px; color: var(--muted); margin-bottom: 5px; font-weight: 600; }
+  .form-input {
+    width: 100%; background: var(--bg3); border: 1px solid var(--border);
+    color: var(--text); border-radius: 6px; padding: 8px 12px; font-size: 12px;
+  }
+  .form-input:focus { outline: none; border-color: var(--lt-red); }
+  select.form-input option { background: var(--bg3); }
+
+  /* ── Charts (CSS bars) ── */
+  .bar-track { background: var(--bg3); border-radius: 4px; height: 8px; overflow: hidden; }
+  .bar-fill  { height: 100%; border-radius: 4px; transition: width 0.6s; }
+  .bar-red   { background: var(--lt-red); }
+  .bar-green { background: var(--green); }
+  .bar-cyan  { background: var(--cyan); }
+  .bar-amber { background: var(--amber); }
+
+  /* ── Forecast chart ── */
+  .chart-area { position: relative; height: 180px; margin-top: 12px; }
+  .chart-svg  { width: 100%; height: 100%; }
+
+  /* ── Merit order ── */
+  .merit-bar-row { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; font-size: 11px; }
+  .merit-bar-label { width: 120px; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .merit-bar-track { flex: 1; background: var(--bg3); border-radius: 3px; height: 18px; overflow: hidden; position: relative; }
+  .merit-bar-fill  { height: 100%; border-radius: 3px; display: flex; align-items: center; padding-left: 6px; font-size: 10px; font-weight: 600; color: rgba(0,0,0,0.85); transition: width 0.6s; }
+  .merit-bar-price { width: 60px; text-align: right; color: var(--muted); }
+  .mcp-line { border-top: 2px dashed var(--lt-red); margin: 10px 0; position: relative; }
+  .mcp-label { position: absolute; right: 0; top: -18px; font-size: 10px; color: var(--lt-red); font-weight: 700; background: var(--bg2); padding: 0 4px; }
+
+  /* ── Energy flow SVG ── */
+  .flow-container { background: var(--bg3); border-radius: 12px; padding: 20px; overflow: auto; }
+
+  /* ── Glossary ── */
+  .glossary-item { border-bottom: 1px solid var(--border); padding: 14px 0; }
+  .glossary-item:last-child { border-bottom: none; }
+  .glossary-term { font-weight: 700; color: var(--cyan); font-size: 13px; margin-bottom: 4px; }
+  .glossary-formula { background: var(--bg3); border-left: 3px solid var(--lt-red); padding: 8px 12px; font-family: 'Courier New', monospace; font-size: 12px; color: #fbbf24; margin: 6px 0; border-radius: 0 6px 6px 0; }
+  .glossary-desc { font-size: 12px; color: var(--muted); line-height: 1.6; }
+
+  /* ── Integration ── */
+  .proto-card { background: var(--bg3); border: 1px solid var(--border); border-radius: 8px; padding: 14px; margin-bottom: 10px; }
+  .proto-name { font-weight: 700; color: #fff; font-size: 13px; margin-bottom: 6px; }
+  .proto-row  { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 4px; }
+  .proto-chip { background: rgba(255,255,255,0.06); border-radius: 4px; padding: 3px 8px; font-size: 10px; color: var(--muted); }
+  .proto-chip b { color: var(--text); }
+
+  /* ── Config table ── */
+  .config-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  .config-table th { background: var(--bg3); color: var(--muted); font-size: 10px; padding: 8px 12px; text-align: left; text-transform: uppercase; letter-spacing: 0.06em; }
+  .config-table td { padding: 8px 12px; border-bottom: 1px solid var(--border); }
+  .config-table tr:last-child td { border-bottom: none; }
+  .config-input { background: var(--bg3); border: 1px solid var(--border); color: var(--text); border-radius: 4px; padding: 4px 8px; font-size: 12px; width: 140px; }
+  .config-input:focus { outline: none; border-color: var(--lt-red); }
+
+  /* ── Settlement ── */
+  .settlement-formula { background: var(--bg3); border-radius: 8px; padding: 14px; font-size: 12px; font-family: monospace; color: #fbbf24; line-height: 1.9; }
+
+  /* ── Scrollbar ── */
+  ::-webkit-scrollbar { width: 5px; height: 5px; }
+  ::-webkit-scrollbar-track { background: var(--bg2); }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+  /* ── Misc ── */
+  .section-title { font-size: 15px; font-weight: 700; color: #fff; margin-bottom: 14px; display: flex; align-items: center; gap: 8px; }
+  .divider { border-top: 1px solid var(--border); margin: 20px 0; }
+  .text-muted { color: var(--muted); }
+  .text-green { color: var(--green); }
+  .text-red   { color: var(--lt-red); }
+  .text-amber { color: var(--amber); }
+  .text-cyan  { color: var(--cyan); }
+  .flex { display: flex; }
+  .flex-center { display: flex; align-items: center; }
+  .gap-8  { gap: 8px; }
+  .gap-12 { gap: 12px; }
+  .mt-8  { margin-top: 8px; }
+  .mt-16 { margin-top: 16px; }
+  .mt-20 { margin-top: 20px; }
+  .mb-16 { margin-bottom: 16px; }
+  .mb-20 { margin-bottom: 20px; }
+  .spinner { display: inline-block; width: 18px; height: 18px; border: 2px solid var(--border); border-top-color: var(--lt-red); border-radius: 50%; animation: spin 0.7s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* ── Alert banner ── */
+  .alert { padding: 10px 16px; border-radius: 7px; font-size: 12px; margin-bottom: 14px; }
+  .alert-info   { background: rgba(6,182,212,0.1); border: 1px solid rgba(6,182,212,0.3); color: var(--cyan); }
+  .alert-success{ background: rgba(34,197,94,0.1); border: 1px solid rgba(34,197,94,0.3); color: var(--green); }
+  .alert-warn   { background: rgba(245,158,11,0.1); border: 1px solid rgba(245,158,11,0.3); color: var(--amber); }
+  .alert-error  { background: rgba(239,68,68,0.1); border: 1px solid rgba(239,68,68,0.3); color: var(--red); }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const { useState, useEffect, useRef, useCallback } = React;
+
+// ── API ────────────────────────────────────────────────────────────────────
+const BASE = "";
+async function api(path, opts={}) {
+  const r = await fetch(BASE + path, { headers: { "Content-Type": "application/json" }, ...opts });
+  if (!r.ok) { const e = await r.json().catch(() => ({})); throw new Error(e.detail || r.statusText); }
+  return r.json();
+}
+
+// ── Helpers ────────────────────────────────────────────────────────────────
+const fmt = (n, d=1) => n == null ? "—" : Number(n).toFixed(d);
+const fmtMoney = (n) => n == null ? "—" : `$${Number(n).toLocaleString(undefined, {minimumFractionDigits:0, maximumFractionDigits:0})}`;
+const perf_color = pct => pct >= 95 ? "text-green" : pct >= 90 ? "text-amber" : "text-red";
+
+// ── SVG Logo ────────────────────────────────────────────────────────────────
+function LTLogo() {
+  return (
+    <svg viewBox="0 0 42 42" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <rect width="42" height="42" rx="8" fill="#C8202F"/>
+      <text x="21" y="28" textAnchor="middle" fill="white" fontSize="18" fontWeight="900" fontFamily="Arial Black, sans-serif">L&T</text>
+    </svg>
+  );
+}
+
+// ── Sidebar ────────────────────────────────────────────────────────────────
+const NAV = [
+  { section: "OVERVIEW" },
+  { key: "dashboard",    label: "Dashboard",        icon: "⬛" },
+  { section: "MARKET" },
+  { key: "utility",      label: "Utility Portal",   icon: "⚡" },
+  { key: "bids",         label: "Aggregator Bids",  icon: "📊" },
+  { key: "settlement",   label: "Settlement",        icon: "💰" },
+  { section: "PLATFORM" },
+  { key: "energyflow",   label: "Energy Flow",       icon: "🔀" },
+  { key: "config",       label: "Sim Config",        icon: "⚙️" },
+  { section: "REFERENCE" },
+  { key: "glossary",     label: "Glossary",          icon: "📖" },
+  { key: "integration",  label: "Integration Guide", icon: "🔌" },
+];
+
+function Sidebar({ active, onNav }) {
+  return (
+    <div id="sidebar">
+      <div className="logo-area">
+        <div className="logo-lt">
+          <LTLogo/>
+          <div>
+            <div className="logo-name">Neural Grid</div>
+            <div className="logo-name">Platform</div>
+            <div className="logo-sub">Larsen & Toubro DES</div>
+          </div>
+        </div>
+        <span className="logo-badge">VPP SUPER-AGGREGATOR</span>
+      </div>
+      <nav>
+        {NAV.map((n, i) =>
+          n.section
+            ? <div key={i} className="nav-section">{n.section}</div>
+            : <div key={n.key} className={`nav-item${active===n.key?" active":""}`} onClick={()=>onNav(n.key)}>
+                <span className="nav-icon">{n.icon}</span>{n.label}
+              </div>
+        )}
+      </nav>
+      <div className="sidebar-footer">
+        <div><b style={{color:"#fff"}}>L&T DES</b> &mdash; Global Energy</div>
+        <div>Platform v2.1.0</div>
+        <div style={{marginTop:4}}>
+          <span className="badge badge-green">LIVE SIM</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Dashboard ──────────────────────────────────────────────────────────────
+function DashboardScreen() {
+  const [status, setStatus] = useState(null);
+  const [aggs, setAggs] = useState([]);
+  const [forecast, setForecast] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  const load = () => {
+    Promise.all([
+      api("/api/market/status"),
+      api("/api/market/aggregators").then(d => d.aggregators),
+      api("/api/market/forecast").then(d => d.hourly),
+    ]).then(([s, a, f]) => { setStatus(s); setAggs(a); setForecast(f); setLoading(false); })
+     .catch(() => setLoading(false));
+  };
+  useEffect(() => { load(); const t = setInterval(load, 30000); return () => clearInterval(t); }, []);
+
+  if (loading) return <div className="page flex-center" style={{justifyContent:"center",height:"60vh"}}><div className="spinner"/></div>;
+  if (!status) return <div className="page"><div className="alert alert-error">Failed to load market status.</div></div>;
+
+  const totalCap = aggs.reduce((s,a)=>s+a.capacity_mw,0);
+  const totalDers = aggs.reduce((s,a)=>s+a.ders,0);
+
+  // Mini sparkline for forecast
+  const hours = forecast.slice(0,24);
+  const maxD = Math.max(...hours.map(h=>h.forecast_mw||0), 1);
+  const pts = (arr, key) => arr.map((h,i) => `${(i/23*100).toFixed(1)},${(100 - (h[key]||0)/maxD*100).toFixed(1)}`).join(" ");
+
+  return (
+    <div className="page">
+      <div className="kpi-grid">
+        <div className="kpi kpi-accent-red">
+          <div className="kpi-label">Total Portfolio</div>
+          <div className="kpi-value">{fmt(status.total_portfolio_mw,1)}<span className="kpi-unit">MW</span></div>
+          <div className="kpi-note">Available flexibility</div>
+        </div>
+        <div className="kpi kpi-accent-navy">
+          <div className="kpi-label">Aggregators</div>
+          <div className="kpi-value">{status.active_aggregators}<span className="kpi-unit">global</span></div>
+          <div className="kpi-note">6 countries</div>
+        </div>
+        <div className="kpi kpi-accent-green">
+          <div className="kpi-label">Active DERs</div>
+          <div className="kpi-value">{status.total_der_count}</div>
+          <div className="kpi-note">Across all portfolios</div>
+        </div>
+        <div className="kpi kpi-accent-amber">
+          <div className="kpi-label">Base Rate</div>
+          <div className="kpi-value">$85<span className="kpi-unit">/MWh</span></div>
+          <div className="kpi-note">+ $35 incentive</div>
+        </div>
+        <div className="kpi kpi-accent-purple">
+          <div className="kpi-label">Open Volume</div>
+          <div className="kpi-value">{fmt(status.open_volume_mw,0)}<span className="kpi-unit">MW</span></div>
+          <div className="kpi-note">Pending procurement</div>
+        </div>
+        <div className="kpi kpi-accent-red">
+          <div className="kpi-label">Events Active</div>
+          <div className="kpi-value">{(status.open_events||0)+(status.cleared_events||0)}<span className="kpi-unit">events</span></div>
+          <div className="kpi-note">Open + cleared</div>
+        </div>
+      </div>
+
+      <div className="grid-2" style={{gap:18}}>
+        {/* Forecast */}
+        <div className="card">
+          <div className="card-header">
+            <span className="card-title">24h Demand & Flexibility Forecast</span>
+            <span className="badge badge-blue">Live</span>
+          </div>
+          <svg viewBox="0 0 100 100" preserveAspectRatio="none" style={{width:"100%",height:160,display:"block"}}>
+            <defs>
+              <linearGradient id="gd" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stopColor="#C8202F" stopOpacity="0.4"/>
+                <stop offset="100%" stopColor="#C8202F" stopOpacity="0"/>
+              </linearGradient>
+              <linearGradient id="gr" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stopColor="#22c55e" stopOpacity="0.3"/>
+                <stop offset="100%" stopColor="#22c55e" stopOpacity="0"/>
+              </linearGradient>
+            </defs>
+            {hours.length>1 && <>
+              <polygon points={`0,100 ${pts(hours,"forecast_mw")} 100,100`} fill="url(#gd)"/>
+              <polyline points={pts(hours,"forecast_mw")} fill="none" stroke="#C8202F" strokeWidth="1.5"/>
+              <polygon points={`0,100 ${pts(hours,"renewable_mw")} 100,100`} fill="url(#gr)"/>
+              <polyline points={pts(hours,"renewable_mw")} fill="none" stroke="#22c55e" strokeWidth="1" strokeDasharray="3,2"/>
+            </>}
+          </svg>
+          <div className="flex gap-12 mt-8" style={{fontSize:11}}>
+            <span style={{color:"#C8202F"}}>&#9644; Demand</span>
+            <span style={{color:"#22c55e"}}>&#9644;&#9644; Renewable</span>
+          </div>
+        </div>
+
+        {/* Aggregator portfolio */}
+        <div className="card">
+          <div className="card-header"><span className="card-title">Aggregator Portfolios</span></div>
+          {aggs.map(a => (
+            <div key={a.id} style={{marginBottom:12}}>
+              <div className="flex-center gap-8" style={{justifyContent:"space-between",marginBottom:4}}>
+                <span style={{fontSize:12}}>{a.flag} {a.name}</span>
+                <span style={{fontSize:11,color:"var(--muted)"}}>{fmt(a.capacity_mw,0)} MW · {a.ders} DERs</span>
+              </div>
+              <div className="bar-track">
+                <div className="bar-fill bar-cyan" style={{width:`${(a.capacity_mw/totalCap*100).toFixed(0)}%`}}/>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Performance table */}
+      <div className="card mt-20">
+        <div className="card-header">
+          <span className="card-title">Aggregator Performance Summary</span>
+          <span className="text-muted" style={{fontSize:11}}>Last 30 days</span>
+        </div>
+        <table>
+          <thead><tr><th>Aggregator</th><th>Region</th><th>Portfolio</th><th>Capacity</th><th>Avg Performance</th><th>Earnings (USD)</th><th>Status</th></tr></thead>
+          <tbody>
+            {aggs.map(a => (
+              <tr key={a.id}>
+                <td><span style={{fontWeight:600}}>{a.flag} {a.name}</span><br/><span className="text-muted" style={{fontSize:10}}>{a.id}</span></td>
+                <td><span className="badge badge-navy">{a.region}</span></td>
+                <td style={{color:"var(--muted)"}}>{a.portfolio}</td>
+                <td>{fmt(a.capacity_mw,0)} MW</td>
+                <td><span className={perf_color(a.avg_performance_pct)}>{fmt(a.avg_performance_pct,1)}%</span></td>
+                <td className="text-green">{fmtMoney(a.total_earned_usd)}</td>
+                <td><span className={`badge badge-${a.status==="Active"?"green":"amber"}`}>{a.status}</span></td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+// ── Utility Portal ─────────────────────────────────────────────────────────
+function UtilityPortalScreen() {
+  const [events, setEvents] = useState([]);
+  const [forecast, setForecast] = useState([]);
+  const [form, setForm] = useState({ procurement_mw: 50, duration_h: 0.5, max_price_usd_per_mwh: 120, type: "Emergency DR" });
+  const [msg, setMsg] = useState(null);
+  const [busy, setBusy] = useState(false);
+
+  const load = () => {
+    api("/api/market/events").then(d => setEvents(d.events));
+    api("/api/market/forecast").then(d => setForecast(d.hourly));
+  };
+  useEffect(() => { load(); }, []);
+
+  const publish = async () => {
+    setBusy(true); setMsg(null);
+    try {
+      await api("/api/market/events", { method:"POST", body: JSON.stringify(form) });
+      setMsg({ type:"success", text: "Procurement event published. Aggregators notified via OpenADR 2.0b." });
+      load();
+    } catch(e) { setMsg({ type:"error", text: e.message }); }
+    finally { setBusy(false); }
+  };
+
+  const hours = forecast.slice(0,24);
+  const maxD = Math.max(...hours.map(h=>h.forecast_mw||0), 1);
+  const pts = (arr, key) => arr.map((h,i) => `${(i/23*100).toFixed(1)},${(100-(h[key]||0)/maxD*100).toFixed(1)}`).join(" ");
+
+  const shortfallHours = hours.filter(h => (h.shortfall_mw||0) > 0);
+
+  return (
+    <div className="page">
+      <div className="section-title">⚡ Utility Operations Portal</div>
+      {shortfallHours.length > 0 && (
+        <div className="alert alert-warn">
+          ⚠️ Forecast shows shortfall in {shortfallHours.length} hours. Peak shortfall: {fmt(Math.max(...shortfallHours.map(h=>h.shortfall_mw)),1)} MW. Consider publishing procurement event.
+        </div>
+      )}
+
+      <div className="grid-2 mb-20">
+        {/* Forecast chart */}
+        <div className="card col-span-2">
+          <div className="card-header">
+            <span className="card-title">System Load Forecast vs Baseline vs Flexibility</span>
+            <span className="badge badge-blue">24h Outlook</span>
+          </div>
+          <div style={{overflowX:"auto"}}>
+            <svg viewBox="0 0 700 160" style={{width:"100%",minWidth:400,height:160}}>
+              <defs>
+                <linearGradient id="gdem" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor="#C8202F" stopOpacity="0.35"/>
+                  <stop offset="100%" stopColor="#C8202F" stopOpacity="0"/>
+                </linearGradient>
+              </defs>
+              {hours.length>1 && <>
+                <polygon points={`0,160 ${hours.map((h,i)=>`${i/23*700},${160-(h.forecast_mw||0)/maxD*140}`).join(" ")} 700,160`} fill="url(#gdem)"/>
+                <polyline points={hours.map((h,i)=>`${i/23*700},${160-(h.forecast_mw||0)/maxD*140}`).join(" ")} fill="none" stroke="#C8202F" strokeWidth="2"/>
+                <polyline points={hours.map((h,i)=>`${i/23*700},${160-(h.baseline_mw||0)/maxD*140}`).join(" ")} fill="none" stroke="#8b5cf6" strokeWidth="1.5" strokeDasharray="4,3"/>
+                <polyline points={hours.map((h,i)=>`${i/23*700},${160-(h.renewable_mw||0)/maxD*140}`).join(" ")} fill="none" stroke="#22c55e" strokeWidth="1.5"/>
+                {/* Shortfall shading */}
+                {hours.map((h,i) => h.shortfall_mw>0 ? (
+                  <rect key={i} x={i/23*700-10} y={0} width={30} height={160} fill="rgba(245,158,11,0.08)"/>
+                ) : null)}
+                {/* Hour labels */}
+                {[0,4,8,12,16,20,23].map(i => (
+                  <text key={i} x={i/23*700} y={158} fontSize="9" fill="#7a8fab" textAnchor="middle">{String(i).padStart(2,"0")}:00</text>
+                ))}
+              </>}
+            </svg>
+          </div>
+          <div className="flex gap-12 mt-8" style={{fontSize:11}}>
+            <span style={{color:"#C8202F"}}>&#9644; Demand</span>
+            <span style={{color:"#8b5cf6"}}>&#9648; Baseline</span>
+            <span style={{color:"#22c55e"}}>&#9644; Renewable</span>
+            <span style={{color:"var(--amber)"}}>&#9647; Shortfall hours</span>
+          </div>
+        </div>
+      </div>
+
+      <div className="grid-2">
+        {/* Publish event form */}
+        <div className="card">
+          <div className="card-header"><span className="card-title">Publish Procurement Event</span></div>
+          {msg && <div className={`alert alert-${msg.type}`}>{msg.text}</div>}
+          <div className="form-group">
+            <label className="form-label">Event Type</label>
+            <select className="form-input" value={form.type} onChange={e=>setForm(f=>({...f,type:e.target.value}))}>
+              <option>Emergency DR</option>
+              <option>Economic DR</option>
+              <option>Peak Shaving</option>
+              <option>Frequency Response</option>
+              <option>Ancillary Services</option>
+              <option>Capacity Market</option>
+            </select>
+          </div>
+          <div className="form-group">
+            <label className="form-label">Required Flexibility (MW)</label>
+            <input type="number" className="form-input" value={form.procurement_mw} onChange={e=>setForm(f=>({...f,procurement_mw:+e.target.value}))}/>
+          </div>
+          <div className="form-group">
+            <label className="form-label">Duration (hours)</label>
+            <input type="number" className="form-input" step="0.5" value={form.duration_h} onChange={e=>setForm(f=>({...f,duration_h:+e.target.value}))}/>
+          </div>
+          <div className="form-group">
+            <label className="form-label">Price Ceiling (USD/MWh)</label>
+            <input type="number" className="form-input" value={form.max_price_usd_per_mwh} onChange={e=>setForm(f=>({...f,max_price_usd_per_mwh:+e.target.value}))}/>
+          </div>
+          <div className="alert alert-info" style={{fontSize:11}}>
+            Signal: OpenADR 2.0b → IEEE 2030.5 DERControls dispatched to each aggregator's DER portfolio.
+          </div>
+          <button className="btn btn-primary" style={{width:"100%",marginTop:4}} onClick={publish} disabled={busy}>
+            {busy ? <><span className="spinner"/></> : "📡 Publish to Market"}
+          </button>
+        </div>
+
+        {/* Recent events */}
+        <div className="card">
+          <div className="card-header"><span className="card-title">Recent Procurement Events</span></div>
+          <table>
+            <thead><tr><th>ID</th><th>Type</th><th>MW</th><th>Price Cap</th><th>Status</th></tr></thead>
+            <tbody>
+              {events.slice(0,8).map(e => (
+                <tr key={e.event_id}>
+                  <td style={{fontFamily:"monospace",fontSize:10}}>{e.event_id}</td>
+                  <td>{e.type}</td>
+                  <td>{fmt(e.procurement_mw,0)}</td>
+                  <td>${fmt(e.max_price_usd_per_mwh,0)}</td>
+                  <td><span className={`badge badge-${e.status==="Settled"?"green":e.status==="Cleared"?"blue":"amber"}`}>{e.status}</span></td>
+                </tr>
+              ))}
+              {events.length===0 && <tr><td colSpan={5} style={{textAlign:"center",color:"var(--muted)",padding:20}}>No events yet</td></tr>}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Bid Market ─────────────────────────────────────────────────────────────
+function BidMarketScreen() {
+  const [events, setEvents] = useState([]);
+  const [selEvent, setSelEvent] = useState(null);
+  const [merit, setMerit] = useState(null);
+  const [bids, setBids] = useState([]);
+  const [aggs, setAggs] = useState([]);
+  const [form, setForm] = useState({ event_id:"", aggregator_id:"AGG-EU-01", quantity_mw:10, price_usd_per_mwh:80 });
+  const [msg, setMsg] = useState(null);
+  const [clearing, setClearing] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+
+  const loadEvents = () => api("/api/market/events").then(d => {
+    const ev = d.events || [];
+    setEvents(ev);
+    if(ev.length && !selEvent) { setSelEvent(ev[0].event_id); setForm(f=>({...f,event_id:ev[0].event_id})); }
+  });
+  useEffect(() => { loadEvents(); api("/api/market/aggregators").then(d => setAggs(d.aggregators||[])); }, []);
+  useEffect(() => {
+    if (!selEvent) return;
+    api(`/api/market/merit-order/${selEvent}`).then(setMerit);
+    api(`/api/market/bids?event_id=${selEvent}`).then(d => setBids(d.bids||[]));
+  }, [selEvent]);
+
+  const maxMW = merit ? Math.max(...merit.bids.map(b=>b.quantity_mw),1) : 1;
+  const colors = ["#C8202F","#06b6d4","#22c55e","#f59e0b","#8b5cf6","#ec4899","#f97316","#14b8a6","#a855f7","#84cc16"];
+
+  const submitBid = async () => {
+    setSubmitting(true); setMsg(null);
+    try {
+      await api("/api/market/bids", { method:"POST", body: JSON.stringify({...form, event_id: selEvent||form.event_id}) });
+      setMsg({ type:"success", text:"Bid submitted successfully." });
+      if(selEvent){ api(`/api/market/merit-order/${selEvent}`).then(setMerit); api(`/api/market/bids?event_id=${selEvent}`).then(d=>setBids(d.bids||[])); }
+    } catch(e) { setMsg({ type:"error", text: e.message }); }
+    finally { setSubmitting(false); }
+  };
+
+  const clearMarket = async () => {
+    if (!selEvent) return;
+    setClearing(true);
+    try {
+      await api(`/api/market/events/${selEvent}/clear`, { method:"POST" });
+      setMsg({ type:"success", text:"Market cleared. Awards issued via merit order." });
+      loadEvents();
+      api(`/api/market/merit-order/${selEvent}`).then(setMerit);
+    } catch(e) { setMsg({ type:"error", text: e.message }); }
+    finally { setClearing(false); }
+  };
+
+  return (
+    <div className="page">
+      <div className="section-title">📊 Flexibility Market — Merit Order</div>
+      {msg && <div className={`alert alert-${msg.type}`}>{msg.text}</div>}
+
+      <div className="flex-center gap-8 mb-16">
+        <label className="form-label" style={{margin:0,whiteSpace:"nowrap"}}>Event:</label>
+        <select className="form-input" style={{maxWidth:320}} value={selEvent||""} onChange={e=>{setSelEvent(e.target.value);setForm(f=>({...f,event_id:e.target.value}));}}>
+          {events.map(e=><option key={e.event_id} value={e.event_id}>[{e.status}] {e.event_id} — {fmt(e.procurement_mw,0)}MW @ ${fmt(e.max_price_usd_per_mwh,0)}/MWh</option>)}
+        </select>
+        {events.find(e=>e.event_id===selEvent)?.status==="Open" && (
+          <button className="btn btn-primary btn-sm" onClick={clearMarket} disabled={clearing}>{clearing?"Clearing...":"Clear Market"}</button>
+        )}
+      </div>
+
+      <div className="grid-2">
+        {/* Merit order chart */}
+        <div className="card col-span-2">
+          <div className="card-header">
+            <span className="card-title">Merit Order Stack</span>
+            {merit && <span style={{fontSize:12}}>MCP: <b style={{color:"var(--lt-red)"}}>${fmt(merit.mcp_usd_per_mwh,2)}/MWh</b> · Selected: <b style={{color:"var(--green)"}}>{fmt((merit.bids||[]).filter(b=>b.selected).reduce((s,b)=>s+b.quantity_mw,0),1)} MW</b> / {fmt(merit.target_mw,1)} MW needed</span>}
+          </div>
+          {merit && merit.bids.length > 0 ? (
+            <>
+              {merit.bids.map((b,i) => (
+                <div key={b.bid_id} className="merit-bar-row">
+                  <div className="merit-bar-label">{b.flag||""} {b.aggregator_name}</div>
+                  <div className="merit-bar-track">
+                    <div className="merit-bar-fill" style={{width:`${(b.quantity_mw/maxMW*100).toFixed(0)}%`, background:colors[i%colors.length]}}>
+                      {b.quantity_mw>=1 && <>{fmt(b.quantity_mw,1)}MW</>}
+                    </div>
+                  </div>
+                  <div className="merit-bar-price">${fmt(b.price_usd_per_mwh,2)}</div>
+                  <span className={`badge badge-${b.selected?"green":"amber"}`} style={{minWidth:70,textAlign:"center"}}>{b.selected?"Selected":"Not selected"}</span>
+                  <span style={{fontSize:10,color:"var(--muted)",minWidth:55}}>cum: {fmt(b.cumulative_mw,1)}MW</span>
+                </div>
+              ))}
+              {merit.mcp_usd_per_mwh > 0 && (
+                <div style={{position:"relative",margin:"8px 0"}}>
+                  <div style={{borderTop:"2px dashed var(--lt-red)",position:"relative"}}>
+                    <span style={{position:"absolute",right:0,top:-18,fontSize:10,color:"var(--lt-red)",fontWeight:700,background:"var(--bg2)",padding:"0 4px"}}>MCP = ${fmt(merit.mcp_usd_per_mwh,2)}/MWh</span>
+                  </div>
+                </div>
+              )}
+              <div className="alert alert-info mt-8" style={{fontSize:11}}>
+                <b>Pricing:</b> Uniform (MCP) — all selected bidders receive the marginal clearing price regardless of their bid price.
+              </div>
+            </>
+          ) : <div className="text-muted" style={{padding:20,textAlign:"center"}}>No bids for selected event</div>}
+        </div>
+
+        {/* Submit bid */}
+        <div className="card">
+          <div className="card-header"><span className="card-title">Submit Bid (Aggregator)</span></div>
+          <div className="form-group">
+            <label className="form-label">Aggregator</label>
+            <select className="form-input" value={form.aggregator_id} onChange={e=>setForm(f=>({...f,aggregator_id:e.target.value}))}>
+              {aggs.map(a=><option key={a.id} value={a.id}>{a.flag} {a.name}</option>)}
+            </select>
+          </div>
+          <div className="form-group">
+            <label className="form-label">Quantity (MW)</label>
+            <input type="number" className="form-input" value={form.quantity_mw} min={0.1} max={100} onChange={e=>setForm(f=>({...f,quantity_mw:+e.target.value}))}/>
+          </div>
+          <div className="form-group">
+            <label className="form-label">Bid Price (USD/MWh)</label>
+            <input type="number" className="form-input" value={form.price_usd_per_mwh} min={1} onChange={e=>setForm(f=>({...f,price_usd_per_mwh:+e.target.value}))}/>
+          </div>
+          <div className="alert alert-info" style={{fontSize:11}}>
+            Base rate: <b>$85/MWh</b>. Performance &gt;90%: +<b>$35/MWh</b> incentive. Penalty below threshold: <b>$20/MWh</b>.
+          </div>
+          <button className="btn btn-primary" style={{width:"100%"}} onClick={submitBid} disabled={submitting||!selEvent}>
+            {submitting?"Submitting...":"Submit Bid"}
+          </button>
+        </div>
+
+        {/* Bid table */}
+        <div className="card">
+          <div className="card-header"><span className="card-title">All Bids — Selected Event</span></div>
+          <table>
+            <thead><tr><th>Aggregator</th><th>Qty (MW)</th><th>Price ($/MWh)</th><th>Status</th></tr></thead>
+            <tbody>
+              {bids.map(b => (
+                <tr key={b.bid_id}>
+                  <td>{b.flag||""} {b.aggregator_name||b.aggregator_id}</td>
+                  <td>{fmt(b.quantity_mw,1)}</td>
+                  <td>${fmt(b.price_usd_per_mwh,2)}</td>
+                  <td><span className={`badge badge-${b.status==="Selected"?"green":b.status==="Rejected"?"red":"amber"}`}>{b.status}</span></td>
+                </tr>
+              ))}
+              {bids.length===0 && <tr><td colSpan={4} style={{textAlign:"center",color:"var(--muted)",padding:16}}>No bids</td></tr>}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Energy Flow ─────────────────────────────────────────────────────────────
+function EnergyFlowScreen() {
+  const [aggs, setAggs] = useState([]);
+  useEffect(()=>{ api("/api/market/aggregators").then(setAggs); },[]);
+
+  // 6 aggregators in a vertical stack on left, L&T VPP in center, Grid on right
+  const AGG_Y = [60, 120, 180, 240, 300, 360];
+
+  return (
+    <div className="page">
+      <div className="section-title">🔀 Energy & Value Flow Diagram</div>
+      <div className="alert alert-info mb-16" style={{fontSize:11}}>
+        Physical energy flows left-to-right (DERs → L&T VPP → Grid). Financial settlement flows right-to-left. Animated particles indicate active dispatch.
+      </div>
+      <div className="flow-container" style={{overflowX:"auto"}}>
+        <svg viewBox="0 0 820 440" style={{width:"100%",minWidth:700,height:440}}>
+          <defs>
+            <marker id="arrow-r" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+              <path d="M0,0 L0,6 L8,3 z" fill="#22c55e"/>
+            </marker>
+            <marker id="arrow-money" markerWidth="8" markerHeight="8" refX="2" refY="3" orient="auto">
+              <path d="M8,0 L8,6 L0,3 z" fill="#f59e0b"/>
+            </marker>
+            <marker id="arrow-ctrl" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+              <path d="M0,0 L0,6 L8,3 z" fill="#06b6d4"/>
+            </marker>
+          </defs>
+
+          {/* ── DER Clusters (left) ── */}
+          {(aggs.length>0?aggs:[
+            {id:"AGG-EU-01",name:"SolarMax EU",flag:"🇩🇪",portfolio:"Solar+BESS",capacity_mw:45},
+            {id:"AGG-US-01",name:"FlexGrid US",flag:"🇺🇸",portfolio:"Industrial DR",capacity_mw:80},
+            {id:"AGG-IN-01",name:"L&T DES India",flag:"🇮🇳",portfolio:"Solar+BESS+EV",capacity_mw:33},
+            {id:"AGG-AU-01",name:"GridFlex AU",flag:"🇦🇺",portfolio:"Solar+EV",capacity_mw:25},
+            {id:"AGG-JP-01",name:"Denki JP",flag:"🇯🇵",portfolio:"BESS+DR",capacity_mw:15},
+            {id:"AGG-GB-01",name:"BritFlex UK",flag:"🇬🇧",portfolio:"Wind+BESS",capacity_mw:20},
+          ]).map((a,i) => {
+            const y = 50 + i * 65;
+            return (
+              <g key={a.id}>
+                {/* DER icons */}
+                <rect x="8" y={y-18} width="100" height="36" rx="6" fill="#111d35" stroke="#1e2e4a"/>
+                <text x="58" y={y-4} textAnchor="middle" fontSize="9" fill="#7a8fab">{a.flag} {a.name.split(" ").slice(-1)}</text>
+                <text x="58" y={y+10} textAnchor="middle" fontSize="8" fill="#22c55e">{a.capacity_mw} MW</text>
+
+                {/* Energy flow line to VPP */}
+                <line x1="108" y1={y} x2="310" y2="210" stroke="#22c55e" strokeWidth="1.5" opacity="0.6" markerEnd="url(#arrow-r)"/>
+                {/* Money flow back */}
+                <line x1="305" y1="215" x2="108" y2={y+4} stroke="#f59e0b" strokeWidth="1" strokeDasharray="5,3" opacity="0.5" markerEnd="url(#arrow-money)"/>
+                {/* Control signal */}
+                <line x1="310" y1="205" x2="108" y2={y-4} stroke="#06b6d4" strokeWidth="0.8" strokeDasharray="3,4" opacity="0.4" markerEnd="url(#arrow-ctrl)"/>
+
+                {/* Animated energy particle */}
+                <circle r="4" fill="#22c55e" opacity="0.9">
+                  <animateMotion dur={`${2+i*0.4}s`} repeatCount="indefinite" path={`M 108,${y} L 310,210`}/>
+                </circle>
+              </g>
+            );
+          })}
+
+          {/* ── L&T VPP Hub ── */}
+          <rect x="290" y="160" width="130" height="100" rx="12" fill="#1E3A5F" stroke="#C8202F" strokeWidth="2"/>
+          <text x="355" y="195" textAnchor="middle" fontSize="10" fontWeight="bold" fill="white">L&T</text>
+          <text x="355" y="210" textAnchor="middle" fontSize="10" fontWeight="bold" fill="white">Neural Grid</text>
+          <text x="355" y="228" textAnchor="middle" fontSize="9" fill="#93c5fd">VPP Operator</text>
+          <text x="355" y="245" textAnchor="middle" fontSize="8" fill="#f59e0b">218 MW total</text>
+
+          {/* ── Energy to Grid ── */}
+          <line x1="420" y1="210" x2="590" y2="180" stroke="#22c55e" strokeWidth="2" markerEnd="url(#arrow-r)"/>
+          <line x1="585" y1="185" x2="420" y2="215" stroke="#f59e0b" strokeWidth="1.5" strokeDasharray="5,3" markerEnd="url(#arrow-money)"/>
+          <circle r="5" fill="#22c55e" opacity="0.9">
+            <animateMotion dur="1.8s" repeatCount="indefinite" path="M 420,210 L 590,180"/>
+          </circle>
+          <circle r="4" fill="#f59e0b" opacity="0.8">
+            <animateMotion dur="2.2s" repeatCount="indefinite" path="M 590,180 L 420,210"/>
+          </circle>
+
+          {/* ── Grid / Utility ── */}
+          <rect x="590" y="145" width="120" height="70" rx="10" fill="#111d35" stroke="#1e2e4a" strokeWidth="1.5"/>
+          <text x="650" y="172" textAnchor="middle" fontSize="10" fontWeight="bold" fill="white">⚡ Grid /</text>
+          <text x="650" y="186" textAnchor="middle" fontSize="10" fontWeight="bold" fill="white">Utility TSO</text>
+          <text x="650" y="202" textAnchor="middle" fontSize="8" fill="#7a8fab">1,200 MW peak</text>
+
+          {/* ── Grid to Consumers ── */}
+          <line x1="710" y1="185" x2="790" y2="185" stroke="#22c55e" strokeWidth="1.5" markerEnd="url(#arrow-r)"/>
+          <rect x="790" y="165" width="22" height="40" rx="4" fill="#111d35" stroke="#22c55e"/>
+          <text x="801" y="192" textAnchor="middle" fontSize="8" fill="#22c55e">🏠</text>
+
+          {/* ── OpenADR signal ── */}
+          <line x1="590" y1="175" x2="420" y2="195" stroke="#06b6d4" strokeWidth="0.8" strokeDasharray="4,4" opacity="0.5" markerEnd="url(#arrow-ctrl)"/>
+          <text x="505" y="170" textAnchor="middle" fontSize="8" fill="#06b6d4" opacity="0.8">OpenADR</text>
+
+          {/* ── Legend ── */}
+          <g transform="translate(8,410)">
+            <line x1="0" y1="8" x2="25" y2="8" stroke="#22c55e" strokeWidth="1.5"/>
+            <text x="30" y="12" fontSize="9" fill="#7a8fab">Energy flow</text>
+            <line x1="100" y1="8" x2="125" y2="8" stroke="#f59e0b" strokeWidth="1.5" strokeDasharray="4,3"/>
+            <text x="130" y="12" fontSize="9" fill="#7a8fab">Settlement (money)</text>
+            <line x1="240" y1="8" x2="265" y2="8" stroke="#06b6d4" strokeWidth="1" strokeDasharray="3,4"/>
+            <text x="270" y="12" fontSize="9" fill="#7a8fab">Control signal (DR dispatch)</text>
+          </g>
+        </svg>
+      </div>
+
+      {/* Architecture summary */}
+      <div className="grid-3 mt-20">
+        <div className="card-sm">
+          <div className="card-title mb-16">DER Layer</div>
+          <div style={{fontSize:12,color:"var(--muted)",lineHeight:1.8}}>
+            <div>• Solar PV / BESS / EV / Wind</div>
+            <div>• IEEE 2030.5 SEP 2.0 control</div>
+            <div>• 15-min AMI metering</div>
+            <div>• Local sub-aggregators</div>
+          </div>
+        </div>
+        <div className="card-sm">
+          <div className="card-title mb-16">L&T VPP Layer</div>
+          <div style={{fontSize:12,color:"var(--muted)",lineHeight:1.8}}>
+            <div>• Super-aggregator / DES operator</div>
+            <div>• Merit order market clearing</div>
+            <div>• OpenADR 2.0b dispatch</div>
+            <div>• Real-time portfolio management</div>
+          </div>
+        </div>
+        <div className="card-sm">
+          <div className="card-title mb-16">Market Layer</div>
+          <div style={{fontSize:12,color:"var(--muted)",lineHeight:1.8}}>
+            <div>• Utility/TSO procurement</div>
+            <div>• OASIS EML bidding protocol</div>
+            <div>• T+2 UN/EDIFACT settlement</div>
+            <div>• CERC / ENTSO-E / FERC 2222</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Settlement ─────────────────────────────────────────────────────────────
+function SettlementScreen() {
+  const [settlements, setSettlements] = useState([]);
+  const [sel, setSel] = useState(null);
+  useEffect(()=>{ api("/api/market/settlements").then(d=>{ const s=d.settlements||[]; setSettlements(s); if(s.length) setSel(s[0]); }); },[]);
+
+  const s = sel;
+  return (
+    <div className="page">
+      <div className="section-title">💰 Settlement Statements</div>
+      <div className="grid-2">
+        <div className="card">
+          <div className="card-header"><span className="card-title">Settlement Records</span></div>
+          <table>
+            <thead><tr><th>Event</th><th>Aggregator</th><th>Delivered</th><th>Net Payout</th><th>Status</th></tr></thead>
+            <tbody>
+              {settlements.map(s=>(
+                <tr key={s.settlement_id} style={{cursor:"pointer",background:sel?.settlement_id===s.settlement_id?"rgba(200,32,47,0.08)":"undefined"}} onClick={()=>setSel(s)}>
+                  <td style={{fontFamily:"monospace",fontSize:10}}>{s.event_id}</td>
+                  <td>{s.flag} {s.aggregator_name}</td>
+                  <td>{fmt(s.delivered_mw,1)} MW</td>
+                  <td className="text-green">{fmtMoney(s.total_payment_usd)}</td>
+                  <td><span className="badge badge-green">{s.performance_status||"Settled"}</span></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+
+        {s && (
+          <div className="card">
+            <div className="card-header">
+              <span className="card-title">Statement Detail — {s.settlement_id}</span>
+              <span className="badge badge-green">{s.performance_status||"Settled"}</span>
+            </div>
+            <div className="settlement-formula">
+              Contracted:  {fmt(s.contracted_mw,1)} MW × {fmt(s.duration_h,2)} h = {fmt(s.contracted_mw*s.duration_h,2)} MWh<br/>
+              Delivered:   {fmt(s.delivered_mw,1)} MW × {fmt(s.duration_h,2)} h = {fmt(s.energy_mwh,2)} MWh<br/>
+              Performance: {fmt(s.performance_pct,1)}%<br/>
+              <br/>
+              Base Payment    = {fmt(s.energy_mwh,2)} MWh × $85  = ${fmt(s.base_payment_usd,2)}<br/>
+              {s.performance_pct>=90
+                ? `Incentive       = ${fmt(s.energy_mwh,2)} MWh × $35  = $${fmt(s.incentive_payment_usd,2)}`
+                : `Penalty         = ${fmt(s.contracted_mw*s.duration_h - s.energy_mwh,2)} MWh × $20 = -$${fmt(s.penalty_usd,2)}`
+              }<br/>
+              ─────────────────────────────────────<br/>
+              Net Payout      = ${fmt(s.total_payment_usd,2)} USD<br/>
+            </div>
+            <div className="mt-16">
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+                <div className="card-sm">
+                  <div className="kpi-label">Base Payment</div>
+                  <div style={{fontSize:18,fontWeight:700,color:"#fff"}}>{fmtMoney(s.base_payment_usd)}</div>
+                </div>
+                <div className="card-sm">
+                  <div className="kpi-label">{s.performance_pct>=90?"Incentive":"Penalty"}</div>
+                  <div style={{fontSize:18,fontWeight:700,color:s.performance_pct>=90?"var(--green)":"var(--red)"}}>
+                    {s.performance_pct>=90?"+":"-"}{fmtMoney(s.performance_pct>=90?s.incentive_payment_usd:s.penalty_usd)}
+                  </div>
+                </div>
+                <div className="card-sm" style={{gridColumn:"span 2"}}>
+                  <div className="kpi-label">Net Payout</div>
+                  <div style={{fontSize:22,fontWeight:700,color:"var(--green)"}}>{fmtMoney(s.total_payment_usd)} USD</div>
+                </div>
+              </div>
+            </div>
+            <div className="alert alert-info mt-16" style={{fontSize:11}}>
+              <b>Format:</b> UN/EDIFACT MSCONS · <b>Cycle:</b> T+2 business days · <b>Framework:</b> CERC / ENTSO-E / FERC Order 2222
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── Sim Config ─────────────────────────────────────────────────────────────
+function SimConfigScreen() {
+  const [config, setConfig] = useState(null);
+  const [dirty, setDirty] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [msg, setMsg] = useState(null);
+
+  useEffect(()=>{ api("/api/market/config").then(c=>{ setConfig(c); setDirty(false); }); },[]);
+
+  const set = (section, key, val) => {
+    setConfig(c=>({ ...c, [section]: { ...c[section], [key]: isNaN(val)?val:+val } }));
+    setDirty(true);
+  };
+
+  const save = async () => {
+    setSaving(true); setMsg(null);
+    try {
+      await api("/api/market/config", { method:"PUT", body: JSON.stringify(config) });
+      setMsg({ type:"success", text:"Configuration saved. All simulations will use updated parameters." });
+      setDirty(false);
+    } catch(e) { setMsg({ type:"error", text: e.message }); }
+    finally { setSaving(false); }
+  };
+
+  if (!config) return <div className="page flex-center" style={{justifyContent:"center",height:"50vh"}}><div className="spinner"/></div>;
+
+  const sections = [
+    { key:"market", title:"Market Parameters", fields:[
+      ["base_rate_usd_per_mwh","Base Rate","USD/MWh"],
+      ["incentive_rate_usd_per_mwh","Incentive Rate","USD/MWh"],
+      ["penalty_rate_usd_per_mwh","Penalty Rate","USD/MWh"],
+      ["performance_threshold_pct","Performance Threshold","%"],
+      ["min_bid_mw","Min Bid","MW"],
+      ["max_bid_mw","Max Bid","MW"],
+      ["bid_gate_closure_min","Gate Closure","min"],
+      ["settlement_period_min","Settlement Period","min"],
+      ["pricing_mechanism","Pricing Mechanism",""],
+      ["currency","Currency",""],
+      ["exchange_rate_inr_per_usd","INR/USD Rate",""],
+    ]},
+    { key:"grid", title:"Grid Parameters", fields:[
+      ["system_peak_mw","System Peak","MW"],
+      ["base_load_mw","Base Load","MW"],
+      ["renewable_penetration_pct","Renewable Penetration","%"],
+      ["grid_frequency_hz","Grid Frequency","Hz"],
+      ["nominal_voltage_kv","Nominal Voltage","kV"],
+      ["flexibility_target_mw","Flexibility Target","MW"],
+      ["dr_trigger_shortfall_pct","DR Trigger Shortfall","%"],
+    ]},
+    { key:"baseline", title:"Baseline Methodology", fields:[
+      ["method","Method",""],
+      ["lookback_days","Lookback Days","days"],
+      ["adjustment_band_pct","Adjustment Band","%"],
+      ["meter_data_granularity_min","Meter Granularity","min"],
+    ]},
+    { key:"settlement", title:"Settlement Parameters", fields:[
+      ["payment_cycle","Payment Cycle",""],
+      ["underperformance_threshold_pct","Underperformance Threshold","%"],
+      ["overperformance_cap_pct","Overperformance Cap","%"],
+      ["dispute_window_days","Dispute Window","days"],
+    ]},
+  ];
+
+  return (
+    <div className="page">
+      <div className="section-title">⚙️ Simulation Configuration
+        <span className="badge badge-amber" style={{marginLeft:8,fontSize:10}}>EDITABLE — plug in real data here</span>
+      </div>
+      <div className="alert alert-info mb-20" style={{fontSize:12}}>
+        All values below are simulation parameters. When real data becomes available, replace these values via this panel or the <b>PUT /api/market/config</b> endpoint. No code changes required.
+      </div>
+      {msg && <div className={`alert alert-${msg.type} mb-16`}>{msg.text}</div>}
+
+      {sections.map(sec => (
+        <div className="card mb-16" key={sec.key}>
+          <div className="card-header"><span className="card-title">{sec.title}</span></div>
+          <table className="config-table">
+            <thead><tr><th>Parameter</th><th>Value</th><th>Unit</th></tr></thead>
+            <tbody>
+              {sec.fields.map(([k, label, unit]) => (
+                <tr key={k}>
+                  <td style={{color:"var(--text)"}}>{label}<br/><span style={{fontSize:10,color:"var(--muted)",fontFamily:"monospace"}}>{k}</span></td>
+                  <td>
+                    <input
+                      className="config-input"
+                      value={config[sec.key]?.[k] ?? ""}
+                      onChange={e=>set(sec.key, k, e.target.value)}
+                    />
+                  </td>
+                  <td style={{color:"var(--muted)",fontSize:11}}>{unit}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ))}
+
+      {/* Aggregators table */}
+      <div className="card mb-16">
+        <div className="card-header"><span className="card-title">Aggregator Registry</span><span style={{fontSize:11,color:"var(--muted)"}}>Edit via config PUT</span></div>
+        <table>
+          <thead><tr><th>ID</th><th>Name</th><th>Country</th><th>Capacity (MW)</th><th>Min Price ($/MWh)</th><th>Portfolio</th><th>DERs</th></tr></thead>
+          <tbody>
+            {(config.aggregators||[]).map(a=>(
+              <tr key={a.id}>
+                <td style={{fontFamily:"monospace",fontSize:10}}>{a.id}</td>
+                <td>{a.flag} {a.name}</td>
+                <td>{a.country}</td>
+                <td>{a.capacity_mw}</td>
+                <td>${a.min_price}</td>
+                <td style={{color:"var(--muted)"}}>{a.portfolio}</td>
+                <td>{a.ders}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      <div style={{display:"flex",gap:12}}>
+        <button className="btn btn-primary" onClick={save} disabled={!dirty||saving}>
+          {saving?"Saving...":dirty?"Save Changes":"Saved"}
+        </button>
+        <button className="btn btn-ghost" onClick={()=>{ api("/api/market/config").then(c=>{setConfig(c);setDirty(false);}); }}>Reset</button>
+      </div>
+    </div>
+  );
+}
+
+// ── Glossary ───────────────────────────────────────────────────────────────
+function GlossaryScreen() {
+  const items = [
+    {
+      term: "Market Clearing Price (MCP)",
+      formula: "MCP = price of the last (marginal) accepted bid in merit order",
+      desc: "Bids are stacked cheapest-first (merit order). The MCP is the bid price that fills the last MW of the required flexibility. Under Uniform Pricing, all selected bidders receive MCP regardless of their individual bid price."
+    },
+    {
+      term: "Settlement Formula",
+      formula: "Net Payout = Base Payment + Incentive − Penalty\n  Base Payment  = Delivered MWh × Base Rate ($85/MWh)\n  Incentive     = Delivered MWh × $35/MWh   [if Performance ≥ 90%]\n  Penalty       = Underdelivered MWh × $20/MWh  [if Performance < 90%]",
+      desc: "T+2 settlement — payment is made within 2 business days of the event. Overperformance (>110%) is capped at contracted quantity."
+    },
+    {
+      term: "Performance %",
+      formula: "Performance % = (Delivered MW ÷ Contracted MW) × 100",
+      desc: "Measured as average MW over the settlement period. Metered via AMI/smart meters at 15-minute intervals per IEC 61968-9 MDMS."
+    },
+    {
+      term: "Baseline (ASHRAE 10-in-10)",
+      formula: "Baseline = Average of 10 highest-consumption days in prior 10 days\n  Adjusted ± 10% symmetric band",
+      desc: "Day-matching selects similar weekday/weekend days. 15-min granularity. Adjustment band accounts for temperature and occupancy variance. Source: AMI smart meters."
+    },
+    {
+      term: "Flexibility Available",
+      formula: "Flexibility = Σ (Aggregator Nameplate Capacity − Current Dispatch)\n             for all active aggregators",
+      desc: "Sum of curtailable/dispatchable capacity across all aggregators. Each aggregator reports available MW at their submitted bid price."
+    },
+    {
+      term: "Incentive Rate",
+      formula: "Incentive Payment = Delivered MWh × $35/MWh   [Performance ≥ 90%]",
+      desc: "Fixed incentive of $35/MWh on top of the $85/MWh base rate. Applies when delivered performance meets or exceeds the 90% threshold. Encourages reliable participation."
+    },
+    {
+      term: "Penalty Rate",
+      formula: "Penalty = Underdelivered MWh × $20/MWh   [Performance < 90%]",
+      desc: "Applied to the shortfall (contracted minus delivered) when performance falls below 90%. Ensures aggregators only bid what they can reliably deliver."
+    },
+    {
+      term: "Virtual Power Plant (VPP)",
+      formula: "VPP Capacity = Σ DER_i (i = 1..N across all aggregators)",
+      desc: "L&T acts as super-aggregator / VPP operator. Controls are issued at aggregator portfolio level (not device level) via OpenADR 2.0b. Each aggregator then dispatches its DERs using IEEE 2030.5."
+    },
+    {
+      term: "Exchange Rate",
+      formula: "INR equivalent = USD amount × 83.5 (configurable)",
+      desc: "Used to convert USD settlements to INR for India-based aggregators. Rate is configurable in Sim Config and will be replaced by live FX feed when integrated."
+    },
+    {
+      term: "Merit Order",
+      formula: "Sort bids: price ascending → allocate from cheapest until MW required is met",
+      desc: "Economically efficient dispatch — cheapest flexibility resources dispatched first. Cumulative MW accumulates until the required quantity is met; the last accepted bid sets the MCP."
+    },
+  ];
+
+  return (
+    <div className="page">
+      <div className="section-title">📖 Glossary — Formulas & Assumptions</div>
+      <div className="card">
+        {items.map((item,i) => (
+          <div key={i} className="glossary-item">
+            <div className="glossary-term">{item.term}</div>
+            <div className="glossary-formula">{item.formula}</div>
+            <div className="glossary-desc">{item.desc}</div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ── Integration Guide ───────────────────────────────────────────────────────
+function IntegrationScreen() {
+  const [cfg, setCfg] = useState(null);
+  useEffect(()=>{ api("/api/market/config").then(c=>setCfg(c.integration)).catch(()=>{}); },[]);
+
+  const protocols = [
+    { name:"DR Signal Dispatch", key:"dr_signal", icon:"📡", desc:"Utility publishes DR events to L&T VPP, which relays to aggregators." },
+    { name:"DER Control", key:"der_control", icon:"⚡", desc:"Per-device setpoints delivered to DERs via IEEE 2030.5 DERControls." },
+    { name:"Grid Topology", key:"topology", icon:"🗺", desc:"CIM XML network model for feeder/DT topology import from ADMS." },
+    { name:"Metering / AMI", key:"metering", icon:"📟", desc:"15-min interval data from smart meters for baseline & settlement verification." },
+    { name:"Market Bidding", key:"market_bid", icon:"📊", desc:"Aggregators submit flexibility bids via OASIS Energy Market Language REST API." },
+    { name:"Settlement", key:"settlement", icon:"💰", desc:"Post-event financial settlement statements in UN/EDIFACT MSCONS format." },
+    { name:"Real-time Telemetry", key:"telemetry", icon:"📶", desc:"MQTT broker for real-time DER state telemetry (1-second updates)." },
+    { name:"Weather / Forecast", key:"weather_forecast", icon:"🌤", desc:"Solar irradiance and temperature forecast for renewable generation prediction." },
+  ];
+
+  return (
+    <div className="page">
+      <div className="section-title">🔌 Integration Guide — Plug-in Points</div>
+      <div className="alert alert-info mb-20" style={{fontSize:12}}>
+        These are the integration touch-points where real external system data will replace simulation values. Each entry shows the protocol, data format, authentication method, and endpoint to configure.
+      </div>
+
+      {protocols.map(p => {
+        const c = cfg?.[p.key];
+        return (
+          <div key={p.key} className="proto-card">
+            <div className="proto-name">{p.icon} {p.name}</div>
+            <div style={{fontSize:12,color:"var(--muted)",marginBottom:8}}>{p.desc}</div>
+            {c && (
+              <div className="proto-row">
+                <div className="proto-chip"><b>Protocol:</b> {c.protocol}</div>
+                <div className="proto-chip"><b>Format:</b> {c.format}</div>
+                <div className="proto-chip"><b>Auth:</b> {c.auth}</div>
+                <div className="proto-chip"><b>Endpoint:</b> <code style={{color:"var(--cyan)"}}>{c.endpoint}</code></div>
+              </div>
+            )}
+          </div>
+        );
+      })}
+
+      <div className="card mt-20">
+        <div className="card-header"><span className="card-title">Regulatory Frameworks</span></div>
+        <table>
+          <thead><tr><th>Region</th><th>Framework</th><th>Applicability</th><th>Key Requirements</th></tr></thead>
+          <tbody>
+            {[
+              ["India","CERC (Central Electricity Regulatory Commission)","AGG-IN-01 (Varanasi)","DERMS registration, AMI metering, 15-min scheduling"],
+              ["European Union","ENTSO-E / EU Network Codes","AGG-EU-01 (DE), AGG-GB-01 (UK)","PICASSO / TERRE balancing markets, mFRR/aFRR"],
+              ["USA","FERC Order 2222","AGG-US-01","Aggregators can participate in wholesale markets directly"],
+              ["Australia","AEMO / NEM","AGG-AU-01","5-minute settlement, VPP registration with AEMO"],
+              ["Japan","OCCTO","AGG-JP-01","FIT/FIP programs, Demand Response aggregation"],
+              ["Settlement","UN/EDIFACT MSCONS","Global","Electronic data interchange for energy quantity statements"],
+            ].map(([r,f,a,k],i)=>(
+              <tr key={i}>
+                <td><b>{r}</b></td>
+                <td style={{color:"var(--cyan)",fontSize:11}}>{f}</td>
+                <td style={{color:"var(--muted)",fontSize:11}}>{a}</td>
+                <td style={{color:"var(--muted)",fontSize:11}}>{k}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+// ── App Shell ───────────────────────────────────────────────────────────────
+const SCREENS = {
+  dashboard:   DashboardScreen,
+  utility:     UtilityPortalScreen,
+  bids:        BidMarketScreen,
+  settlement:  SettlementScreen,
+  energyflow:  EnergyFlowScreen,
+  config:      SimConfigScreen,
+  glossary:    GlossaryScreen,
+  integration: IntegrationScreen,
+};
+
+const TITLES = {
+  dashboard:   "Global Market Dashboard",
+  utility:     "Utility Operations Portal",
+  bids:        "Flexibility Market — Bids",
+  settlement:  "Settlement Statements",
+  energyflow:  "Energy Flow Diagram",
+  config:      "Simulation Configuration",
+  glossary:    "Glossary & Formulas",
+  integration: "Integration Guide",
+};
+
+function App() {
+  const [screen, setScreen] = useState("dashboard");
+  const [now, setNow] = useState(new Date());
+  useEffect(()=>{ const t=setInterval(()=>setNow(new Date()),60000); return()=>clearInterval(t); },[]);
+
+  const Screen = SCREENS[screen] || DashboardScreen;
+  return (
+    <>
+      <Sidebar active={screen} onNav={setScreen}/>
+      <div id="main">
+        <div className="topbar">
+          <div className="topbar-title">{TITLES[screen]}</div>
+          <div style={{display:"flex",alignItems:"center",gap:16}}>
+            <div className="topbar-meta">
+              <span className="live-dot"/>
+              <span>L&T Neural Grid Platform &mdash; Super-Aggregator VPP &mdash; </span>
+              <span>{now.toLocaleString("en-IN",{timeZone:"Asia/Kolkata",hour12:false,hour:"2-digit",minute:"2-digit"})} IST</span>
+            </div>
+            <a href="/ui" style={{fontSize:11,color:"var(--muted)",textDecoration:"none",border:"1px solid var(--border)",padding:"4px 10px",borderRadius:5,whiteSpace:"nowrap"}} title="Back to DERMS Dashboard">
+              ← DERMS
+            </a>
+          </div>
+        </div>
+        <Screen/>
+      </div>
+    </>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+</script>
+</body>
+</html>
