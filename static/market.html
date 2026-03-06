@@ -726,7 +726,7 @@ function BidMarketScreen() {
 // ── Energy Flow ─────────────────────────────────────────────────────────────
 function EnergyFlowScreen() {
   const [aggs, setAggs] = useState([]);
-  useEffect(()=>{ api("/api/market/aggregators").then(setAggs); },[]);
+  useEffect(()=>{ api("/api/market/aggregators").then(d=>setAggs(d.aggregators||[])); },[]);
 
   // 6 aggregators in a vertical stack on left, L&T VPP in center, Grid on right
   const AGG_Y = [60, 120, 180, 240, 300, 360];

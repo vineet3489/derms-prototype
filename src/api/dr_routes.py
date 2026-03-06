@@ -193,6 +193,8 @@ async def get_demand_analysis():
         dr_recommendation = {
             "recommended": False,
             "shortfall_kw": 0,
+            "available_flex_kw": round(enrolled_demand_kw * 0.3, 1),
+            "enrolled_consumers": len(enrolled),
             "message": "No significant demand shortfall. Grid conditions normal.",
         }
 
