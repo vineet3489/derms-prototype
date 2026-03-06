@@ -728,101 +728,184 @@ function EnergyFlowScreen() {
   const [aggs, setAggs] = useState([]);
   useEffect(()=>{ api("/api/market/aggregators").then(d=>setAggs(d.aggregators||[])); },[]);
 
-  // 6 aggregators in a vertical stack on left, L&T VPP in center, Grid on right
-  const AGG_Y = [60, 120, 180, 240, 300, 360];
+  const REGIONS = [
+    {id:"AGG-EU-01", flag:"🇩🇪", label:"Germany",   tso:"ENTSO-E",  portfolio:"Solar PV + BESS",     cap:45,  color:"#f59e0b"},
+    {id:"AGG-US-01", flag:"🇺🇸", label:"USA",        tso:"FERC",     portfolio:"Industrial DR + BESS", cap:80,  color:"#06b6d4"},
+    {id:"AGG-IN-01", flag:"🇮🇳", label:"India",      tso:"SLDC/CERC",portfolio:"Solar + BESS + EV",   cap:33,  color:"#22c55e"},
+    {id:"AGG-AU-01", flag:"🇦🇺", label:"Australia",  tso:"AEMO",     portfolio:"Solar + EV Fleet",     cap:25,  color:"#f59e0b"},
+    {id:"AGG-JP-01", flag:"🇯🇵", label:"Japan",      tso:"OCCTO",    portfolio:"BESS + Industrial DR", cap:15,  color:"#8b5cf6"},
+    {id:"AGG-GB-01", flag:"🇬🇧", label:"UK",         tso:"National Grid",portfolio:"Wind + BESS",     cap:20,  color:"#06b6d4"},
+  ];
+
+  // Row layout: 6 rows × 78px
+  const ROW_H = 78;
+  const TILE_Y = (i) => 18 + i * ROW_H;   // top of each region tile
+  const TILE_CY = (i) => TILE_Y(i) + 32;  // centre-y of each region tile
+
+  // SVG dimensions
+  const W = 900; const H = 510;
+  // Column x positions
+  const DER_X = 8;    const DER_W = 115;  // DER cluster box
+  const ARR_X1 = 123; const ARR_X2 = 180; // local energy arrow
+  const GRID_X = 180; const GRID_W = 80;  // local grid box
+  const CONN_X = 260;                      // right edge of region section
+  const VPP_X  = 355; const VPP_W = 125;  // L&T VPP box
+  const VPP_CX = VPP_X + VPP_W / 2;
+  const VPP_Y  = 165; const VPP_H = 130;
+  const VPP_CY = VPP_Y + VPP_H / 2;
+  const UTL_X  = 680; const UTL_W = 115;  // Utility box
+  const UTL_CX = UTL_X + UTL_W / 2;
+  const UTL_CY = VPP_CY;
 
   return (
     <div className="page">
       <div className="section-title">🔀 Energy & Value Flow Diagram</div>
       <div className="alert alert-info mb-16" style={{fontSize:11}}>
-        Physical energy flows left-to-right (DERs → L&T VPP → Grid). Financial settlement flows right-to-left. Animated particles indicate active dispatch.
+        <b>Physical energy (green) flows locally:</b> DERs inject power into their own regional grid. L&T Neural Grid Platform is a <b>coordination hub only</b> — it issues dispatch signals (cyan) and receives performance telemetry (purple) and settlement (amber). No cross-border energy flow occurs.
       </div>
+
       <div className="flow-container" style={{overflowX:"auto"}}>
-        <svg viewBox="0 0 820 440" style={{width:"100%",minWidth:700,height:440}}>
+        <svg viewBox={`0 0 ${W} ${H}`} style={{width:"100%",minWidth:780,height:H}}>
           <defs>
-            <marker id="arrow-r" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
-              <path d="M0,0 L0,6 L8,3 z" fill="#22c55e"/>
+            {/* arrow markers */}
+            <marker id="arr-energy" markerWidth="7" markerHeight="7" refX="6" refY="3" orient="auto">
+              <path d="M0,0 L0,6 L7,3 z" fill="#22c55e"/>
             </marker>
-            <marker id="arrow-money" markerWidth="8" markerHeight="8" refX="2" refY="3" orient="auto">
-              <path d="M8,0 L8,6 L0,3 z" fill="#f59e0b"/>
+            <marker id="arr-dispatch" markerWidth="7" markerHeight="7" refX="6" refY="3" orient="auto">
+              <path d="M0,0 L0,6 L7,3 z" fill="#06b6d4"/>
             </marker>
-            <marker id="arrow-ctrl" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
-              <path d="M0,0 L0,6 L8,3 z" fill="#06b6d4"/>
+            <marker id="arr-telemetry" markerWidth="7" markerHeight="7" refX="6" refY="3" orient="auto">
+              <path d="M0,0 L0,6 L7,3 z" fill="#8b5cf6"/>
+            </marker>
+            <marker id="arr-money" markerWidth="7" markerHeight="7" refX="2" refY="3" orient="auto">
+              <path d="M7,0 L7,6 L0,3 z" fill="#f59e0b"/>
+            </marker>
+            <marker id="arr-contract" markerWidth="7" markerHeight="7" refX="2" refY="3" orient="auto">
+              <path d="M7,0 L7,6 L0,3 z" fill="#C8202F"/>
             </marker>
           </defs>
 
-          {/* ── DER Clusters (left) ── */}
-          {(aggs.length>0?aggs:[
-            {id:"AGG-EU-01",name:"SolarMax EU",flag:"🇩🇪",portfolio:"Solar+BESS",capacity_mw:45},
-            {id:"AGG-US-01",name:"FlexGrid US",flag:"🇺🇸",portfolio:"Industrial DR",capacity_mw:80},
-            {id:"AGG-IN-01",name:"L&T DES India",flag:"🇮🇳",portfolio:"Solar+BESS+EV",capacity_mw:33},
-            {id:"AGG-AU-01",name:"GridFlex AU",flag:"🇦🇺",portfolio:"Solar+EV",capacity_mw:25},
-            {id:"AGG-JP-01",name:"Denki JP",flag:"🇯🇵",portfolio:"BESS+DR",capacity_mw:15},
-            {id:"AGG-GB-01",name:"BritFlex UK",flag:"🇬🇧",portfolio:"Wind+BESS",capacity_mw:20},
-          ]).map((a,i) => {
-            const y = 50 + i * 65;
+          {/* ═══ COLUMN HEADERS ═══ */}
+          <text x={DER_X+DER_W/2}    y="10" textAnchor="middle" fontSize="8" fill="#4a5568" fontWeight="700" letterSpacing="0.08em">DER CLUSTER</text>
+          <text x={GRID_X+GRID_W/2}  y="10" textAnchor="middle" fontSize="8" fill="#4a5568" fontWeight="700" letterSpacing="0.08em">LOCAL GRID</text>
+          <text x={VPP_CX}           y="10" textAnchor="middle" fontSize="8" fill="#C8202F"  fontWeight="700" letterSpacing="0.08em">L&T COORDINATION</text>
+          <text x={UTL_CX}           y="10" textAnchor="middle" fontSize="8" fill="#4a5568" fontWeight="700" letterSpacing="0.08em">UTILITY / TSO</text>
+
+          {/* ═══ REGION TILES ═══ */}
+          {REGIONS.map((r, i) => {
+            const ty = TILE_Y(i);
+            const cy = TILE_CY(i);
+
+            // Connection from this region to L&T VPP
+            const connY = cy;
+            const vppEdgeY = Math.max(VPP_Y + 10, Math.min(VPP_Y + VPP_H - 10, connY));
+
             return (
-              <g key={a.id}>
-                {/* DER icons */}
-                <rect x="8" y={y-18} width="100" height="36" rx="6" fill="#111d35" stroke="#1e2e4a"/>
-                <text x="58" y={y-4} textAnchor="middle" fontSize="9" fill="#7a8fab">{a.flag} {a.name.split(" ").slice(-1)}</text>
-                <text x="58" y={y+10} textAnchor="middle" fontSize="8" fill="#22c55e">{a.capacity_mw} MW</text>
+              <g key={r.id}>
+                {/* ── DER box ── */}
+                <rect x={DER_X} y={ty} width={DER_W} height={64} rx="6"
+                  fill="#0d1525" stroke={r.color} strokeWidth="1" opacity="0.9"/>
+                <text x={DER_X+58} y={ty+16} textAnchor="middle" fontSize="11">{r.flag}</text>
+                <text x={DER_X+58} y={ty+29} textAnchor="middle" fontSize="8" fill="#e2e8f0" fontWeight="600">{r.label}</text>
+                <text x={DER_X+58} y={ty+41} textAnchor="middle" fontSize="7" fill="#7a8fab">{r.portfolio}</text>
+                <text x={DER_X+58} y={ty+55} textAnchor="middle" fontSize="8" fill={r.color} fontWeight="700">{r.cap} MW</text>
 
-                {/* Energy flow line to VPP */}
-                <line x1="108" y1={y} x2="310" y2="210" stroke="#22c55e" strokeWidth="1.5" opacity="0.6" markerEnd="url(#arrow-r)"/>
-                {/* Money flow back */}
-                <line x1="305" y1="215" x2="108" y2={y+4} stroke="#f59e0b" strokeWidth="1" strokeDasharray="5,3" opacity="0.5" markerEnd="url(#arrow-money)"/>
-                {/* Control signal */}
-                <line x1="310" y1="205" x2="108" y2={y-4} stroke="#06b6d4" strokeWidth="0.8" strokeDasharray="3,4" opacity="0.4" markerEnd="url(#arrow-ctrl)"/>
-
-                {/* Animated energy particle */}
-                <circle r="4" fill="#22c55e" opacity="0.9">
-                  <animateMotion dur={`${2+i*0.4}s`} repeatCount="indefinite" path={`M 108,${y} L 310,210`}/>
+                {/* ── Local energy arrow (DER → Local Grid) ── */}
+                <line x1={DER_X+DER_W} y1={cy} x2={GRID_X-2} y2={cy}
+                  stroke="#22c55e" strokeWidth="2" markerEnd="url(#arr-energy)"/>
+                <circle r="3" fill="#22c55e" opacity="0.95">
+                  <animateMotion dur={`${1.4+i*0.2}s`} repeatCount="indefinite"
+                    path={`M ${DER_X+DER_W},${cy} L ${GRID_X},${cy}`}/>
                 </circle>
+
+                {/* ── Local grid box ── */}
+                <rect x={GRID_X} y={ty+10} width={GRID_W} height={44} rx="5"
+                  fill="#0d1525" stroke="#1e2e4a" strokeWidth="1"/>
+                <text x={GRID_X+GRID_W/2} y={ty+30} textAnchor="middle" fontSize="9">⚡</text>
+                <text x={GRID_X+GRID_W/2} y={ty+42} textAnchor="middle" fontSize="7" fill="#7a8fab">{r.tso}</text>
+
+                {/* ── Dispatch signal: L&T → Region (cyan, dashed) ── */}
+                <line x1={VPP_X} y1={vppEdgeY} x2={CONN_X+4} y2={connY-3}
+                  stroke="#06b6d4" strokeWidth="1" strokeDasharray="4,3" opacity="0.7"
+                  markerEnd="url(#arr-dispatch)"/>
+
+                {/* ── Telemetry: Region → L&T (purple, dashed) ── */}
+                <line x1={CONN_X} y1={connY+3} x2={VPP_X-2} y2={vppEdgeY+3}
+                  stroke="#8b5cf6" strokeWidth="1" strokeDasharray="3,4" opacity="0.6"
+                  markerEnd="url(#arr-telemetry)"/>
+
+                {/* ── Settlement payment: L&T → Region (amber, dashed) ── */}
+                <line x1={VPP_X-4} y1={vppEdgeY-4} x2={CONN_X+4} y2={connY-8}
+                  stroke="#f59e0b" strokeWidth="0.8" strokeDasharray="5,3" opacity="0.5"
+                  markerEnd="url(#arr-money)"/>
               </g>
             );
           })}
 
-          {/* ── L&T VPP Hub ── */}
-          <rect x="290" y="160" width="130" height="100" rx="12" fill="#1E3A5F" stroke="#C8202F" strokeWidth="2"/>
-          <text x="355" y="195" textAnchor="middle" fontSize="10" fontWeight="bold" fill="white">L&T</text>
-          <text x="355" y="210" textAnchor="middle" fontSize="10" fontWeight="bold" fill="white">Neural Grid</text>
-          <text x="355" y="228" textAnchor="middle" fontSize="9" fill="#93c5fd">VPP Operator</text>
-          <text x="355" y="245" textAnchor="middle" fontSize="8" fill="#f59e0b">218 MW total</text>
+          {/* ═══ L&T VPP HUB ═══ */}
+          <rect x={VPP_X} y={VPP_Y} width={VPP_W} height={VPP_H} rx="12"
+            fill="#1E3A5F" stroke="#C8202F" strokeWidth="2.5"/>
+          <text x={VPP_CX} y={VPP_Y+24} textAnchor="middle" fontSize="11" fontWeight="900" fill="white">L&T</text>
+          <text x={VPP_CX} y={VPP_Y+38} textAnchor="middle" fontSize="10" fontWeight="700" fill="white">Neural Grid</text>
+          <text x={VPP_CX} y={VPP_Y+52} textAnchor="middle" fontSize="8" fill="#93c5fd">Coordination Hub</text>
+          <line x1={VPP_X+12} y1={VPP_Y+60} x2={VPP_X+VPP_W-12} y2={VPP_Y+60} stroke="#264a77"/>
+          <text x={VPP_CX} y={VPP_Y+74} textAnchor="middle" fontSize="7.5" fill="#7a8fab">Merit order clearing</text>
+          <text x={VPP_CX} y={VPP_Y+87} textAnchor="middle" fontSize="7.5" fill="#7a8fab">Portfolio: 218 MW / 763 DERs</text>
+          <text x={VPP_CX} y={VPP_Y+100} textAnchor="middle" fontSize="7.5" fill="#7a8fab">6 countries · 3 regions</text>
+          <text x={VPP_CX} y={VPP_Y+116} textAnchor="middle" fontSize="8" fill="#f59e0b" fontWeight="600">No cross-border energy flow</text>
 
-          {/* ── Energy to Grid ── */}
-          <line x1="420" y1="210" x2="590" y2="180" stroke="#22c55e" strokeWidth="2" markerEnd="url(#arrow-r)"/>
-          <line x1="585" y1="185" x2="420" y2="215" stroke="#f59e0b" strokeWidth="1.5" strokeDasharray="5,3" markerEnd="url(#arrow-money)"/>
-          <circle r="5" fill="#22c55e" opacity="0.9">
-            <animateMotion dur="1.8s" repeatCount="indefinite" path="M 420,210 L 590,180"/>
+          {/* ═══ L&T ↔ UTILITY ═══ */}
+          {/* Procurement event: Utility → L&T (red dashed) */}
+          <line x1={UTL_X} y1={UTL_CY-10} x2={VPP_X+VPP_W+2} y2={VPP_CY-10}
+            stroke="#C8202F" strokeWidth="1.2" strokeDasharray="5,3"
+            markerEnd="url(#arr-contract)"/>
+          <text x={(UTL_X+VPP_X+VPP_W)/2} y={UTL_CY-20} textAnchor="middle"
+            fontSize="7.5" fill="#C8202F">Procurement event</text>
+
+          {/* Flexibility confirmation: L&T → Utility (green) */}
+          <line x1={VPP_X+VPP_W+2} y1={VPP_CY} x2={UTL_X-2} y2={UTL_CY}
+            stroke="#22c55e" strokeWidth="1.5" markerEnd="url(#arr-energy)"/>
+          <text x={(UTL_X+VPP_X+VPP_W)/2} y={UTL_CY+10} textAnchor="middle"
+            fontSize="7.5" fill="#22c55e">Flexibility confirmed</text>
+          <circle r="4" fill="#22c55e" opacity="0.9">
+            <animateMotion dur="2.2s" repeatCount="indefinite"
+              path={`M ${VPP_X+VPP_W},${VPP_CY} L ${UTL_X},${UTL_CY}`}/>
           </circle>
-          <circle r="4" fill="#f59e0b" opacity="0.8">
-            <animateMotion dur="2.2s" repeatCount="indefinite" path="M 590,180 L 420,210"/>
-          </circle>
 
-          {/* ── Grid / Utility ── */}
-          <rect x="590" y="145" width="120" height="70" rx="10" fill="#111d35" stroke="#1e2e4a" strokeWidth="1.5"/>
-          <text x="650" y="172" textAnchor="middle" fontSize="10" fontWeight="bold" fill="white">⚡ Grid /</text>
-          <text x="650" y="186" textAnchor="middle" fontSize="10" fontWeight="bold" fill="white">Utility TSO</text>
-          <text x="650" y="202" textAnchor="middle" fontSize="8" fill="#7a8fab">1,200 MW peak</text>
+          {/* Payment: Utility → L&T (amber) */}
+          <line x1={UTL_X} y1={UTL_CY+10} x2={VPP_X+VPP_W+2} y2={VPP_CY+10}
+            stroke="#f59e0b" strokeWidth="1" strokeDasharray="4,3"
+            markerEnd="url(#arr-money)"/>
+          <text x={(UTL_X+VPP_X+VPP_W)/2} y={UTL_CY+22} textAnchor="middle"
+            fontSize="7.5" fill="#f59e0b">Settlement payment</text>
 
-          {/* ── Grid to Consumers ── */}
-          <line x1="710" y1="185" x2="790" y2="185" stroke="#22c55e" strokeWidth="1.5" markerEnd="url(#arrow-r)"/>
-          <rect x="790" y="165" width="22" height="40" rx="4" fill="#111d35" stroke="#22c55e"/>
-          <text x="801" y="192" textAnchor="middle" fontSize="8" fill="#22c55e">🏠</text>
+          {/* ═══ UTILITY BOX ═══ */}
+          <rect x={UTL_X} y={VPP_Y+20} width={UTL_W} height={VPP_H-40} rx="10"
+            fill="#0d1525" stroke="#1e2e4a" strokeWidth="1.5"/>
+          <text x={UTL_CX} y={VPP_Y+48} textAnchor="middle" fontSize="11">⚡</text>
+          <text x={UTL_CX} y={VPP_Y+63} textAnchor="middle" fontSize="9" fontWeight="700" fill="white">Utility / TSO</text>
+          <text x={UTL_CX} y={VPP_Y+78} textAnchor="middle" fontSize="7" fill="#7a8fab">Procures flexibility</text>
+          <text x={UTL_CX} y={VPP_Y+91} textAnchor="middle" fontSize="7" fill="#7a8fab">from L&T portfolio</text>
+          <text x={UTL_CX} y={VPP_Y+106} textAnchor="middle" fontSize="7" fill="#7a8fab">CERC/ENTSO-E/FERC</text>
 
-          {/* ── OpenADR signal ── */}
-          <line x1="590" y1="175" x2="420" y2="195" stroke="#06b6d4" strokeWidth="0.8" strokeDasharray="4,4" opacity="0.5" markerEnd="url(#arrow-ctrl)"/>
-          <text x="505" y="170" textAnchor="middle" fontSize="8" fill="#06b6d4" opacity="0.8">OpenADR</text>
-
-          {/* ── Legend ── */}
-          <g transform="translate(8,410)">
-            <line x1="0" y1="8" x2="25" y2="8" stroke="#22c55e" strokeWidth="1.5"/>
-            <text x="30" y="12" fontSize="9" fill="#7a8fab">Energy flow</text>
-            <line x1="100" y1="8" x2="125" y2="8" stroke="#f59e0b" strokeWidth="1.5" strokeDasharray="4,3"/>
-            <text x="130" y="12" fontSize="9" fill="#7a8fab">Settlement (money)</text>
-            <line x1="240" y1="8" x2="265" y2="8" stroke="#06b6d4" strokeWidth="1" strokeDasharray="3,4"/>
-            <text x="270" y="12" fontSize="9" fill="#7a8fab">Control signal (DR dispatch)</text>
+          {/* ═══ LEGEND ═══ */}
+          <g transform={`translate(8,${H-52})`}>
+            <rect x="0" y="0" width={W-16} height="46" rx="6" fill="#0d1525" stroke="#1e2e4a"/>
+            {[
+              {x:10,  color:"#22c55e", dash:"",     label:"Physical energy flow (within region only)"},
+              {x:210, color:"#06b6d4", dash:"4,3",  label:"Dispatch signal (L&T → Region, OpenADR 2.0b)"},
+              {x:430, color:"#8b5cf6", dash:"3,4",  label:"Telemetry / performance (Region → L&T, IEC 61968-9)"},
+              {x:650, color:"#f59e0b", dash:"5,3",  label:"Settlement payment (UN/EDIFACT MSCONS)"},
+            ].map(l => (
+              <g key={l.x}>
+                <line x1={l.x} y1="18" x2={l.x+28} y2="18"
+                  stroke={l.color} strokeWidth="1.5" strokeDasharray={l.dash}/>
+                <text x={l.x+33} y="22" fontSize="8.5" fill="#7a8fab">{l.label}</text>
+              </g>
+            ))}
+            <text x="10" y="38" fontSize="8" fill="#4a5568">
+              Red dashed ──── Procurement event (Utility → L&T) · Green solid ──── Flexibility delivered confirmation (L&T → Utility)
+            </text>
           </g>
         </svg>
       </div>
@@ -830,30 +913,33 @@ function EnergyFlowScreen() {
       {/* Architecture summary */}
       <div className="grid-3 mt-20">
         <div className="card-sm">
-          <div className="card-title mb-16">DER Layer</div>
-          <div style={{fontSize:12,color:"var(--muted)",lineHeight:1.8}}>
-            <div>• Solar PV / BESS / EV / Wind</div>
-            <div>• IEEE 2030.5 SEP 2.0 control</div>
-            <div>• 15-min AMI metering</div>
-            <div>• Local sub-aggregators</div>
+          <div className="card-title mb-16">Regional DER Layer</div>
+          <div style={{fontSize:12,color:"var(--muted)",lineHeight:1.9}}>
+            <div>• DERs inject energy into <b style={{color:"var(--text)"}}>local grid only</b></div>
+            <div>• No cross-border physical energy</div>
+            <div>• IEEE 2030.5 SEP 2.0 device control</div>
+            <div>• 15-min AMI metering per region</div>
+            <div>• Each region has its own TSO</div>
           </div>
         </div>
         <div className="card-sm">
-          <div className="card-title mb-16">L&T VPP Layer</div>
-          <div style={{fontSize:12,color:"var(--muted)",lineHeight:1.8}}>
-            <div>• Super-aggregator / DES operator</div>
+          <div className="card-title mb-16">L&T Coordination Layer</div>
+          <div style={{fontSize:12,color:"var(--muted)",lineHeight:1.9}}>
+            <div>• <b style={{color:"var(--text)"}}>No energy flows through L&T</b></div>
+            <div>• Issues OpenADR 2.0b dispatch signals</div>
+            <div>• Aggregates global portfolio bids</div>
             <div>• Merit order market clearing</div>
-            <div>• OpenADR 2.0b dispatch</div>
-            <div>• Real-time portfolio management</div>
+            <div>• T+2 UN/EDIFACT settlement</div>
           </div>
         </div>
         <div className="card-sm">
-          <div className="card-title mb-16">Market Layer</div>
-          <div style={{fontSize:12,color:"var(--muted)",lineHeight:1.8}}>
-            <div>• Utility/TSO procurement</div>
-            <div>• OASIS EML bidding protocol</div>
-            <div>• T+2 UN/EDIFACT settlement</div>
-            <div>• CERC / ENTSO-E / FERC 2222</div>
+          <div className="card-title mb-16">What Actually Flows Globally</div>
+          <div style={{fontSize:12,color:"var(--muted)",lineHeight:1.9}}>
+            <div>• <span style={{color:"#06b6d4"}}>Dispatch commands</span> (OpenADR)</div>
+            <div>• <span style={{color:"#8b5cf6"}}>Meter data & telemetry</span> (IEC 61968-9)</div>
+            <div>• <span style={{color:"#f59e0b"}}>Settlement payments</span> (MSCONS)</div>
+            <div>• <span style={{color:"#C8202F"}}>Procurement contracts</span> (OASIS EML)</div>
+            <div>• <span style={{color:"#22c55e"}}>Flexibility confirmations</span></div>
           </div>
         </div>
       </div>
