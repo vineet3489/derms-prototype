@@ -761,7 +761,7 @@ function EnergyFlowScreen() {
     <div className="page">
       <div className="section-title">🔀 Energy & Value Flow Diagram</div>
       <div className="alert alert-info mb-16" style={{fontSize:11}}>
-        <b>Physical energy (green) flows locally:</b> DERs inject power into their own regional grid. L&T Neural Grid Platform is a <b>coordination hub only</b> — it issues dispatch signals (cyan) and receives performance telemetry (purple) and settlement (amber). No cross-border energy flow occurs.
+        <b>Physical energy (green):</b> DERs inject power into their regional grid. L&T Neural Grid Platform coordinates dispatch signals (cyan), receives performance telemetry (purple), and manages settlement (amber) across all regions.
       </div>
 
       <div className="flow-container" style={{overflowX:"auto"}}>
@@ -852,7 +852,7 @@ function EnergyFlowScreen() {
           <text x={VPP_CX} y={VPP_Y+74} textAnchor="middle" fontSize="7.5" fill="#7a8fab">Merit order clearing</text>
           <text x={VPP_CX} y={VPP_Y+87} textAnchor="middle" fontSize="7.5" fill="#7a8fab">Portfolio: 218 MW / 763 DERs</text>
           <text x={VPP_CX} y={VPP_Y+100} textAnchor="middle" fontSize="7.5" fill="#7a8fab">6 countries · 3 regions</text>
-          <text x={VPP_CX} y={VPP_Y+116} textAnchor="middle" fontSize="8" fill="#f59e0b" fontWeight="600">No cross-border energy flow</text>
+          <text x={VPP_CX} y={VPP_Y+116} textAnchor="middle" fontSize="7.5" fill="#7a8fab">OASIS EML · OpenADR 2.0b</text>
 
           {/* ═══ L&T ↔ UTILITY ═══ */}
           {/* Procurement event: Utility → L&T (red dashed) */}
@@ -915,8 +915,8 @@ function EnergyFlowScreen() {
         <div className="card-sm">
           <div className="card-title mb-16">Regional DER Layer</div>
           <div style={{fontSize:12,color:"var(--muted)",lineHeight:1.9}}>
-            <div>• DERs inject energy into <b style={{color:"var(--text)"}}>local grid only</b></div>
-            <div>• No cross-border physical energy</div>
+            <div>• DERs inject energy into the regional grid</div>
+            <div>• IEEE 2030.5 SEP 2.0 device control</div>
             <div>• IEEE 2030.5 SEP 2.0 device control</div>
             <div>• 15-min AMI metering per region</div>
             <div>• Each region has its own TSO</div>
@@ -925,7 +925,7 @@ function EnergyFlowScreen() {
         <div className="card-sm">
           <div className="card-title mb-16">L&T Coordination Layer</div>
           <div style={{fontSize:12,color:"var(--muted)",lineHeight:1.9}}>
-            <div>• <b style={{color:"var(--text)"}}>No energy flows through L&T</b></div>
+            <div>• Global VPP operator &amp; super-aggregator</div>
             <div>• Issues OpenADR 2.0b dispatch signals</div>
             <div>• Aggregates global portfolio bids</div>
             <div>• Merit order market clearing</div>
