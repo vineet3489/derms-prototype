@@ -254,7 +254,7 @@ const NAV = [
   { key: "dashboard",    label: "Dashboard",        icon: "⬛" },
   { section: "MARKET" },
   { key: "utility",      label: "Utility Portal",   icon: "⚡" },
-  { key: "bids",         label: "Aggregator Bids",  icon: "📊" },
+  { key: "aggregator",   label: "Aggregator Portal", icon: "🏭" },
   { key: "settlement",   label: "Settlement",        icon: "💰" },
   { section: "PLATFORM" },
   { key: "energyflow",   label: "Energy Flow",       icon: "🔀" },
@@ -575,150 +575,379 @@ function UtilityPortalScreen() {
   );
 }
 
-// ── Bid Market ─────────────────────────────────────────────────────────────
-function BidMarketScreen() {
+// ── Aggregator Portal ────────────────────────────────────────────────────────
+function AggregatorScreen() {
+  const [aggs, setAggs]     = useState([]);
+  const [selAgg, setSelAgg] = useState(null);
   const [events, setEvents] = useState([]);
+  const [bids, setBids]     = useState([]);
+  const [merit, setMerit]   = useState(null);
   const [selEvent, setSelEvent] = useState(null);
-  const [merit, setMerit] = useState(null);
-  const [bids, setBids] = useState([]);
-  const [aggs, setAggs] = useState([]);
-  const [form, setForm] = useState({ event_id:"", aggregator_id:"AGG-EU-01", quantity_mw:10, price_usd_per_mwh:80 });
-  const [msg, setMsg] = useState(null);
-  const [clearing, setClearing] = useState(false);
+  const [settlements, setSettlements] = useState([]);
+  const [tab, setTab]       = useState("portfolio");
+  const [form, setForm]     = useState({ quantity_mw: 10, price_usd_per_mwh: 80 });
+  const [msg, setMsg]       = useState(null);
   const [submitting, setSubmitting] = useState(false);
 
-  const loadEvents = () => api("/api/market/events").then(d => {
-    const ev = d.events || [];
-    setEvents(ev);
-    if(ev.length && !selEvent) { setSelEvent(ev[0].event_id); setForm(f=>({...f,event_id:ev[0].event_id})); }
-  });
-  useEffect(() => { loadEvents(); api("/api/market/aggregators").then(d => setAggs(d.aggregators||[])); }, []);
+  // Local DER fleet (matches Varanasi pilot topology)
+  const DER_FLEET = [
+    {id:"DER-1", type:"Solar PV", location:"Sigra",      feeder:"FDR-01", kw:25,  status:"Online",   cuf:72, soc:null},
+    {id:"DER-2", type:"Solar PV", location:"Lanka",      feeder:"FDR-01", kw:30,  status:"Online",   cuf:68, soc:null},
+    {id:"DER-3", type:"BESS",     location:"Bhelupur",   feeder:"FDR-02", kw:20,  status:"Online",   cuf:null, soc:78},
+    {id:"DER-4", type:"Solar PV", location:"Cantonment", feeder:"FDR-02", kw:15,  status:"Curtailed",cuf:45, soc:null},
+    {id:"DER-5", type:"Solar PV", location:"Sarnath",    feeder:"FDR-03", kw:18,  status:"Online",   cuf:65, soc:null},
+    {id:"DER-6", type:"BESS",     location:"Nadesar",    feeder:"FDR-03", kw:12,  status:"Online",   cuf:null, soc:62},
+  ];
+  const totalCap   = DER_FLEET.reduce((s,d)=>s+d.kw, 0);
+  const onlineCount= DER_FLEET.filter(d=>d.status==="Online").length;
+  const currentGen = DER_FLEET.filter(d=>d.type==="Solar PV" && d.status==="Online").reduce((s,d)=>s+d.kw*(d.cuf||0)/100,0);
+
+  const load = () => {
+    api("/api/market/aggregators").then(d => {
+      const list = d.aggregators || [];
+      setAggs(list);
+      if (list.length && !selAgg) setSelAgg(list[0]);
+    });
+    api("/api/market/events").then(d => {
+      const ev = d.events || [];
+      setEvents(ev);
+      if (ev.length && !selEvent) setSelEvent(ev[0].event_id);
+    });
+    api("/api/market/settlements").then(d => setSettlements(d.settlements || []));
+  };
+  useEffect(() => { load(); }, []);
   useEffect(() => {
     if (!selEvent) return;
     api(`/api/market/merit-order/${selEvent}`).then(setMerit);
-    api(`/api/market/bids?event_id=${selEvent}`).then(d => setBids(d.bids||[]));
+    api(`/api/market/bids?event_id=${selEvent}`).then(d => setBids(d.bids || []));
   }, [selEvent]);
 
-  const maxMW = merit ? Math.max(...merit.bids.map(b=>b.quantity_mw),1) : 1;
-  const colors = ["#C8202F","#06b6d4","#22c55e","#f59e0b","#8b5cf6","#ec4899","#f97316","#14b8a6","#a855f7","#84cc16"];
+  const myBids = bids.filter(b => selAgg && b.aggregator_id === selAgg.id);
+  const mySettlements = settlements.slice(0, 5);
 
   const submitBid = async () => {
+    if (!selEvent || !selAgg) return;
     setSubmitting(true); setMsg(null);
     try {
-      await api("/api/market/bids", { method:"POST", body: JSON.stringify({...form, event_id: selEvent||form.event_id}) });
-      setMsg({ type:"success", text:"Bid submitted successfully." });
-      if(selEvent){ api(`/api/market/merit-order/${selEvent}`).then(setMerit); api(`/api/market/bids?event_id=${selEvent}`).then(d=>setBids(d.bids||[])); }
+      await api("/api/market/bids", { method:"POST", body: JSON.stringify({
+        event_id: selEvent, aggregator_id: selAgg.id,
+        quantity_mw: form.quantity_mw, price_usd_per_mwh: form.price_usd_per_mwh,
+      })});
+      setMsg({ type:"success", text:"Bid submitted. Awaiting merit-order clearing." });
+      api(`/api/market/merit-order/${selEvent}`).then(setMerit);
+      api(`/api/market/bids?event_id=${selEvent}`).then(d => setBids(d.bids||[]));
     } catch(e) { setMsg({ type:"error", text: e.message }); }
     finally { setSubmitting(false); }
   };
 
-  const clearMarket = async () => {
-    if (!selEvent) return;
-    setClearing(true);
-    try {
-      await api(`/api/market/events/${selEvent}/clear`, { method:"POST" });
-      setMsg({ type:"success", text:"Market cleared. Awards issued via merit order." });
-      loadEvents();
-      api(`/api/market/merit-order/${selEvent}`).then(setMerit);
-    } catch(e) { setMsg({ type:"error", text: e.message }); }
-    finally { setClearing(false); }
-  };
+  const openEvents = events.filter(e => e.status === "Open");
+  const totalEarned = mySettlements.reduce((s,x)=>s+(x.amount_usd||0),0);
+
+  const TABS = [
+    {id:"portfolio", label:"My Portfolio"},
+    {id:"events",    label:`DR Events${openEvents.length ? ` (${openEvents.length})` : ""}`},
+    {id:"bids",      label:"My Bids"},
+    {id:"earnings",  label:"Earnings"},
+  ];
 
   return (
     <div className="page">
-      <div className="section-title">📊 Flexibility Market — Merit Order</div>
-      {msg && <div className={`alert alert-${msg.type}`}>{msg.text}</div>}
+      <div className="section-title">🏭 Aggregator Portal</div>
 
-      <div className="flex-center gap-8 mb-16">
-        <label className="form-label" style={{margin:0,whiteSpace:"nowrap"}}>Event:</label>
-        <select className="form-input" style={{maxWidth:320}} value={selEvent||""} onChange={e=>{setSelEvent(e.target.value);setForm(f=>({...f,event_id:e.target.value}));}}>
-          {events.map(e=><option key={e.event_id} value={e.event_id}>[{e.status}] {e.event_id} — {fmt(e.procurement_mw,0)}MW @ ${fmt(e.max_price_usd_per_mwh,0)}/MWh</option>)}
-        </select>
-        {events.find(e=>e.event_id===selEvent)?.status==="Open" && (
-          <button className="btn btn-primary btn-sm" onClick={clearMarket} disabled={clearing}>{clearing?"Clearing...":"Clear Market"}</button>
+      {/* Aggregator selector */}
+      <div className="flex-center gap-12 mb-16" style={{flexWrap:"wrap"}}>
+        <div style={{display:"flex",alignItems:"center",gap:8}}>
+          <label className="form-label" style={{margin:0}}>Acting as:</label>
+          <select className="form-input" style={{maxWidth:260}} value={selAgg?.id||""} onChange={e=>setSelAgg(aggs.find(a=>a.id===e.target.value))}>
+            {aggs.map(a=><option key={a.id} value={a.id}>{a.name}</option>)}
+          </select>
+        </div>
+        {selAgg && (
+          <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+            <span className="badge badge-green">Online</span>
+            <span style={{fontSize:11,color:"var(--muted)"}}>IEEE 2030.5 · OpenADR 2.0b</span>
+          </div>
         )}
       </div>
 
-      <div className="grid-2">
-        {/* Merit order chart */}
-        <div className="card col-span-2">
-          <div className="card-header">
-            <span className="card-title">Merit Order Stack</span>
-            {merit && <span style={{fontSize:12}}>MCP: <b style={{color:"var(--lt-red)"}}>${fmt(merit.mcp_usd_per_mwh,2)}/MWh</b> · Selected: <b style={{color:"var(--green)"}}>{fmt((merit.bids||[]).filter(b=>b.selected).reduce((s,b)=>s+b.quantity_mw,0),1)} MW</b> / {fmt(merit.target_mw,1)} MW needed</span>}
+      {/* KPI row */}
+      <div className="kpi-grid" style={{gridTemplateColumns:"repeat(auto-fill,minmax(160px,1fr))",marginBottom:18}}>
+        <div className="kpi kpi-accent-red">
+          <div className="kpi-label">My DERs</div>
+          <div className="kpi-value">{onlineCount}<span className="kpi-unit">/ {DER_FLEET.length}</span></div>
+          <div className="kpi-note">online in Varanasi pilot</div>
+        </div>
+        <div className="kpi kpi-accent-navy">
+          <div className="kpi-label">Enrolled Capacity</div>
+          <div className="kpi-value">{totalCap}<span className="kpi-unit">kW</span></div>
+          <div className="kpi-note">nameplate total</div>
+        </div>
+        <div className="kpi kpi-accent-green">
+          <div className="kpi-label">Now Generating</div>
+          <div className="kpi-value">{fmt(currentGen,1)}<span className="kpi-unit">kW</span></div>
+          <div className="kpi-note">solar PV output</div>
+        </div>
+        <div className="kpi kpi-accent-amber">
+          <div className="kpi-label">Open Events</div>
+          <div className="kpi-value">{openEvents.length}</div>
+          <div className="kpi-note">DR events to respond</div>
+        </div>
+        <div className="kpi kpi-accent-purple">
+          <div className="kpi-label">Est. Earnings</div>
+          <div className="kpi-value">${fmt(totalEarned,0)}</div>
+          <div className="kpi-note">last settlements</div>
+        </div>
+      </div>
+
+      {/* Tabs */}
+      <div className="tabs mb-16">
+        {TABS.map(t => (
+          <div key={t.id} className={`tab ${tab===t.id?"active":""}`} onClick={()=>setTab(t.id)}>{t.label}</div>
+        ))}
+      </div>
+
+      {msg && <div className={`alert alert-${msg.type} mb-12`}>{msg.text}</div>}
+
+      {/* ── Tab: Portfolio ── */}
+      {tab === "portfolio" && (
+        <div>
+          <div className="card mb-16">
+            <div className="card-header"><span className="card-title">My DER Fleet — Varanasi Pilot</span></div>
+            <table>
+              <thead><tr><th>DER ID</th><th>Type</th><th>Location</th><th>Feeder</th><th>Capacity</th><th>Status</th><th>CUF / SoC</th></tr></thead>
+              <tbody>
+                {DER_FLEET.map(d => (
+                  <tr key={d.id}>
+                    <td style={{fontWeight:700}}>{d.id}</td>
+                    <td>{d.type}</td>
+                    <td style={{color:"var(--muted)"}}>{d.location}, Varanasi</td>
+                    <td><span className="badge badge-navy">{d.feeder}</span></td>
+                    <td>{d.kw} kW</td>
+                    <td><span className={`badge badge-${d.status==="Online"?"green":d.status==="Curtailed"?"amber":"red"}`}>{d.status}</span></td>
+                    <td style={{color:"var(--muted)"}}>
+                      {d.type==="Solar PV" ? `CUF: ${d.cuf}%` : `SoC: ${d.soc}%`}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
-          {merit && merit.bids.length > 0 ? (
-            <>
-              {merit.bids.map((b,i) => (
-                <div key={b.bid_id} className="merit-bar-row">
-                  <div className="merit-bar-label">{b.flag||""} {b.aggregator_name}</div>
+
+          {/* DER capacity bar */}
+          <div className="card">
+            <div className="card-header"><span className="card-title">Portfolio Capacity Breakdown</span></div>
+            {DER_FLEET.map(d => {
+              const pct = d.type==="Solar PV" ? (d.cuf||0) : (d.soc||0);
+              const color = d.status==="Online" ? "#22c55e" : d.status==="Curtailed" ? "#f59e0b" : "#ef4444";
+              return (
+                <div key={d.id} style={{marginBottom:10}}>
+                  <div style={{display:"flex",justifyContent:"space-between",fontSize:12,marginBottom:3}}>
+                    <span><b>{d.id}</b> — {d.type} · {d.location}</span>
+                    <span style={{color:"var(--muted)"}}>{d.kw} kW · {d.type==="Solar PV"?`CUF ${d.cuf}%`:`SoC ${d.soc}%`}</span>
+                  </div>
+                  <div style={{height:8,background:"var(--bg3)",borderRadius:4,overflow:"hidden"}}>
+                    <div style={{height:"100%",width:`${pct}%`,background:color,borderRadius:4,transition:"width 0.3s"}}/>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* ── Tab: DR Events ── */}
+      {tab === "events" && (
+        <div className="grid-2">
+          <div className="card">
+            <div className="card-header"><span className="card-title">Active DR Events from DVVNL</span></div>
+            {events.length === 0 && <div className="text-muted" style={{padding:20,textAlign:"center"}}>No active events</div>}
+            {events.slice(0,6).map(e => (
+              <div key={e.event_id} style={{padding:"10px 0",borderBottom:"1px solid var(--border)"}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4}}>
+                  <span style={{fontWeight:700,fontSize:13}}>{e.type}</span>
+                  <span className={`badge badge-${e.status==="Open"?"amber":e.status==="Cleared"?"blue":"green"}`}>{e.status}</span>
+                </div>
+                <div style={{fontSize:11,color:"var(--muted)"}}>
+                  {fmt(e.procurement_mw,0)} MW needed · Price cap: ${fmt(e.max_price_usd_per_mwh,0)}/MWh · Duration: {e.duration_h}h
+                </div>
+                {e.status==="Open" && (
+                  <button className="btn btn-primary btn-sm" style={{marginTop:8}}
+                    onClick={()=>{ setSelEvent(e.event_id); setTab("bids"); }}>
+                    Respond with Bid →
+                  </button>
+                )}
+              </div>
+            ))}
+          </div>
+
+          {/* Merit order for selected event */}
+          <div className="card">
+            <div className="card-header">
+              <span className="card-title">Merit Order</span>
+              {merit && <span style={{fontSize:11,color:"var(--muted)"}}>MCP: <b style={{color:"var(--lt-red)"}}>${fmt(merit.mcp_usd_per_mwh,2)}/MWh</b></span>}
+            </div>
+            <div style={{marginBottom:10}}>
+              <select className="form-input" value={selEvent||""} onChange={e=>setSelEvent(e.target.value)}>
+                {events.map(e=><option key={e.event_id} value={e.event_id}>[{e.status}] {e.event_id}</option>)}
+              </select>
+            </div>
+            {merit && merit.bids.length > 0 ? merit.bids.map((b,i) => {
+              const isMine = selAgg && b.aggregator_id === selAgg.id;
+              const maxMW = Math.max(...merit.bids.map(x=>x.quantity_mw),1);
+              return (
+                <div key={b.bid_id} className="merit-bar-row" style={isMine ? {background:"rgba(200,32,47,0.08)",borderRadius:4,padding:"2px 4px"} : {}}>
+                  <div className="merit-bar-label" style={isMine?{color:"#fff",fontWeight:700}:{}}>{isMine ? "★ " : ""}{b.aggregator_name}</div>
                   <div className="merit-bar-track">
-                    <div className="merit-bar-fill" style={{width:`${(b.quantity_mw/maxMW*100).toFixed(0)}%`, background:colors[i%colors.length]}}>
-                      {b.quantity_mw>=1 && <>{fmt(b.quantity_mw,1)}MW</>}
+                    <div className="merit-bar-fill" style={{width:`${(b.quantity_mw/maxMW*100).toFixed(0)}%`,background:isMine?"#C8202F":"#264a77"}}>
+                      {b.quantity_mw>=1&&<>{fmt(b.quantity_mw,1)}MW</>}
                     </div>
                   </div>
                   <div className="merit-bar-price">${fmt(b.price_usd_per_mwh,2)}</div>
-                  <span className={`badge badge-${b.selected?"green":"amber"}`} style={{minWidth:70,textAlign:"center"}}>{b.selected?"Selected":"Not selected"}</span>
-                  <span style={{fontSize:10,color:"var(--muted)",minWidth:55}}>cum: {fmt(b.cumulative_mw,1)}MW</span>
+                  <span className={`badge badge-${b.selected?"green":"amber"}`} style={{minWidth:60,textAlign:"center"}}>{b.selected?"✓ Won":"–"}</span>
+                </div>
+              );
+            }) : <div className="text-muted" style={{textAlign:"center",padding:16}}>No bids yet for this event</div>}
+          </div>
+        </div>
+      )}
+
+      {/* ── Tab: My Bids ── */}
+      {tab === "bids" && (
+        <div className="grid-2">
+          <div className="card">
+            <div className="card-header"><span className="card-title">Submit Bid for DR Event</span></div>
+            <div className="form-group">
+              <label className="form-label">DR Event</label>
+              <select className="form-input" value={selEvent||""} onChange={e=>setSelEvent(e.target.value)}>
+                {events.filter(e=>e.status==="Open").map(e=><option key={e.event_id} value={e.event_id}>{e.event_id} — {e.type} · {fmt(e.procurement_mw,0)}MW</option>)}
+                {events.filter(e=>e.status==="Open").length===0 && <option value="">No open events</option>}
+              </select>
+            </div>
+            <div className="form-group">
+              <label className="form-label">Quantity to Offer (kW)</label>
+              <input type="number" className="form-input" value={form.quantity_mw} min={0.1} max={totalCap/1000}
+                onChange={e=>setForm(f=>({...f,quantity_mw:+e.target.value}))}/>
+              <div style={{fontSize:10,color:"var(--muted)",marginTop:2}}>Available capacity: {fmt(totalCap,0)} kW ({fmt(totalCap/1000,2)} MW)</div>
+            </div>
+            <div className="form-group">
+              <label className="form-label">Bid Price (₹/kWh)</label>
+              <input type="number" className="form-input" value={form.price_usd_per_mwh} min={1}
+                onChange={e=>setForm(f=>({...f,price_usd_per_mwh:+e.target.value}))}/>
+            </div>
+            <div className="alert alert-info" style={{fontSize:11}}>
+              Base rate: <b>₹7/kWh</b>. Performance &gt;90%: +<b>₹3/kWh</b> incentive. Below threshold: <b>₹2/kWh</b> penalty per REMC rules.
+            </div>
+            <button className="btn btn-primary" style={{width:"100%"}} onClick={submitBid}
+              disabled={submitting || !selEvent || events.find(e=>e.event_id===selEvent)?.status!=="Open"}>
+              {submitting ? "Submitting..." : "Submit Bid to L&T DERMS"}
+            </button>
+          </div>
+
+          <div className="card">
+            <div className="card-header"><span className="card-title">My Bid History</span></div>
+            <div style={{marginBottom:10}}>
+              <select className="form-input" value={selEvent||""} onChange={e=>setSelEvent(e.target.value)}>
+                {events.map(e=><option key={e.event_id} value={e.event_id}>[{e.status}] {e.event_id}</option>)}
+              </select>
+            </div>
+            <table>
+              <thead><tr><th>Event</th><th>Qty (MW)</th><th>Price</th><th>Result</th></tr></thead>
+              <tbody>
+                {myBids.length > 0 ? myBids.map(b => (
+                  <tr key={b.bid_id}>
+                    <td style={{fontSize:10,fontFamily:"monospace"}}>{b.bid_id?.slice(-8)}</td>
+                    <td>{fmt(b.quantity_mw,1)}</td>
+                    <td>${fmt(b.price_usd_per_mwh,2)}</td>
+                    <td><span className={`badge badge-${b.status==="Selected"?"green":b.status==="Rejected"?"red":"amber"}`}>{b.status}</span></td>
+                  </tr>
+                )) : (
+                  <tr><td colSpan={4} style={{textAlign:"center",color:"var(--muted)",padding:20}}>
+                    No bids submitted yet for this event
+                  </td></tr>
+                )}
+              </tbody>
+            </table>
+            <div className="alert alert-info mt-12" style={{fontSize:11}}>
+              Bids are submitted to L&T DERMS which runs merit-order clearing and notifies DVVNL/SLDC of awarded flexibility.
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Tab: Earnings ── */}
+      {tab === "earnings" && (
+        <div className="grid-2">
+          <div className="card col-span-2">
+            <div className="card-header">
+              <span className="card-title">Settlement &amp; Earnings History</span>
+              <span style={{fontSize:11,color:"var(--muted)"}}>REMC settlement · T+1 cycle</span>
+            </div>
+            <table>
+              <thead><tr><th>Settlement ID</th><th>Period</th><th>Events</th><th>Energy (kWh)</th><th>Performance</th><th>Amount (₹)</th><th>Status</th></tr></thead>
+              <tbody>
+                {mySettlements.length > 0 ? mySettlements.map((s,i) => (
+                  <tr key={i}>
+                    <td style={{fontFamily:"monospace",fontSize:10}}>{s.settlement_id||`STL-${String(i+1).padStart(4,"0")}`}</td>
+                    <td style={{color:"var(--muted)"}}>{s.period||"Mar 2026"}</td>
+                    <td>{s.events_cleared||1}</td>
+                    <td>{fmt(s.total_energy_kwh||s.energy_kwh||120,1)}</td>
+                    <td><span style={{color: (s.performance_pct||92) >= 90 ? "var(--green)" : "var(--amber)"}}>{fmt(s.performance_pct||92,1)}%</span></td>
+                    <td className="text-green">₹{fmt((s.amount_usd||s.amount||840)*83,0)}</td>
+                    <td><span className={`badge badge-${s.status==="Paid"?"green":"amber"}`}>{s.status||"Paid"}</span></td>
+                  </tr>
+                )) : (
+                  <tr><td colSpan={7} style={{textAlign:"center",color:"var(--muted)",padding:20}}>No settlements yet</td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+
+          <div className="card">
+            <div className="card-header"><span className="card-title">Rate Card — REMC / DVVNL</span></div>
+            <div style={{fontSize:12,lineHeight:2}}>
+              {[
+                ["Base DR rate",       "₹7.00 / kWh"],
+                ["Performance bonus (>90%)", "₹3.00 / kWh"],
+                ["Shortfall penalty",  "₹2.00 / kWh"],
+                ["Settlement cycle",   "T+1 business day"],
+                ["Metering",           "15-min AMI intervals"],
+                ["Protocol",           "IEEE 2030.5 / OpenADR 2.0b"],
+              ].map(([k,v]) => (
+                <div key={k} style={{display:"flex",justifyContent:"space-between",borderBottom:"1px solid var(--border)",padding:"4px 0"}}>
+                  <span style={{color:"var(--muted)"}}>{k}</span>
+                  <span style={{fontWeight:600}}>{v}</span>
                 </div>
               ))}
-              {merit.mcp_usd_per_mwh > 0 && (
-                <div style={{position:"relative",margin:"8px 0"}}>
-                  <div style={{borderTop:"2px dashed var(--lt-red)",position:"relative"}}>
-                    <span style={{position:"absolute",right:0,top:-18,fontSize:10,color:"var(--lt-red)",fontWeight:700,background:"var(--bg2)",padding:"0 4px"}}>MCP = ${fmt(merit.mcp_usd_per_mwh,2)}/MWh</span>
-                  </div>
+            </div>
+          </div>
+
+          <div className="card">
+            <div className="card-header"><span className="card-title">My DER Performance</span></div>
+            {DER_FLEET.filter(d=>d.type==="Solar PV").map(d => (
+              <div key={d.id} style={{marginBottom:10}}>
+                <div style={{display:"flex",justifyContent:"space-between",fontSize:12,marginBottom:3}}>
+                  <span><b>{d.id}</b> · {d.location}</span>
+                  <span style={{color:(d.cuf||0)>=60?"var(--green)":"var(--amber)"}}>{d.cuf}% CUF</span>
                 </div>
-              )}
-              <div className="alert alert-info mt-8" style={{fontSize:11}}>
-                <b>Pricing:</b> Uniform (MCP) — all selected bidders receive the marginal clearing price regardless of their bid price.
+                <div style={{height:6,background:"var(--bg3)",borderRadius:3}}>
+                  <div style={{height:"100%",width:`${d.cuf}%`,background:(d.cuf||0)>=60?"#22c55e":"#f59e0b",borderRadius:3}}/>
+                </div>
               </div>
-            </>
-          ) : <div className="text-muted" style={{padding:20,textAlign:"center"}}>No bids for selected event</div>}
+            ))}
+            {DER_FLEET.filter(d=>d.type==="BESS").map(d => (
+              <div key={d.id} style={{marginBottom:10}}>
+                <div style={{display:"flex",justifyContent:"space-between",fontSize:12,marginBottom:3}}>
+                  <span><b>{d.id}</b> · BESS · {d.location}</span>
+                  <span style={{color:"var(--cyan)"}}>{d.soc}% SoC</span>
+                </div>
+                <div style={{height:6,background:"var(--bg3)",borderRadius:3}}>
+                  <div style={{height:"100%",width:`${d.soc}%`,background:"#06b6d4",borderRadius:3}}/>
+                </div>
+              </div>
+            ))}
+          </div>
         </div>
-
-        {/* Submit bid */}
-        <div className="card">
-          <div className="card-header"><span className="card-title">Submit Bid (Aggregator)</span></div>
-          <div className="form-group">
-            <label className="form-label">Aggregator</label>
-            <select className="form-input" value={form.aggregator_id} onChange={e=>setForm(f=>({...f,aggregator_id:e.target.value}))}>
-              {aggs.map(a=><option key={a.id} value={a.id}>{a.flag} {a.name}</option>)}
-            </select>
-          </div>
-          <div className="form-group">
-            <label className="form-label">Quantity (MW)</label>
-            <input type="number" className="form-input" value={form.quantity_mw} min={0.1} max={100} onChange={e=>setForm(f=>({...f,quantity_mw:+e.target.value}))}/>
-          </div>
-          <div className="form-group">
-            <label className="form-label">Bid Price (USD/MWh)</label>
-            <input type="number" className="form-input" value={form.price_usd_per_mwh} min={1} onChange={e=>setForm(f=>({...f,price_usd_per_mwh:+e.target.value}))}/>
-          </div>
-          <div className="alert alert-info" style={{fontSize:11}}>
-            Base rate: <b>$85/MWh</b>. Performance &gt;90%: +<b>$35/MWh</b> incentive. Penalty below threshold: <b>$20/MWh</b>.
-          </div>
-          <button className="btn btn-primary" style={{width:"100%"}} onClick={submitBid} disabled={submitting||!selEvent}>
-            {submitting?"Submitting...":"Submit Bid"}
-          </button>
-        </div>
-
-        {/* Bid table */}
-        <div className="card">
-          <div className="card-header"><span className="card-title">All Bids — Selected Event</span></div>
-          <table>
-            <thead><tr><th>Aggregator</th><th>Qty (MW)</th><th>Price ($/MWh)</th><th>Status</th></tr></thead>
-            <tbody>
-              {bids.map(b => (
-                <tr key={b.bid_id}>
-                  <td>{b.flag||""} {b.aggregator_name||b.aggregator_id}</td>
-                  <td>{fmt(b.quantity_mw,1)}</td>
-                  <td>${fmt(b.price_usd_per_mwh,2)}</td>
-                  <td><span className={`badge badge-${b.status==="Selected"?"green":b.status==="Rejected"?"red":"amber"}`}>{b.status}</span></td>
-                </tr>
-              ))}
-              {bids.length===0 && <tr><td colSpan={4} style={{textAlign:"center",color:"var(--muted)",padding:16}}>No bids</td></tr>}
-            </tbody>
-          </table>
-        </div>
-      </div>
+      )}
     </div>
   );
 }
@@ -1312,7 +1541,7 @@ function IntegrationScreen() {
 const SCREENS = {
   dashboard:   DashboardScreen,
   utility:     UtilityPortalScreen,
-  bids:        BidMarketScreen,
+  aggregator:  AggregatorScreen,
   settlement:  SettlementScreen,
   energyflow:  EnergyFlowScreen,
   config:      SimConfigScreen,
@@ -1323,7 +1552,7 @@ const SCREENS = {
 const TITLES = {
   dashboard:   "Global Market Dashboard",
   utility:     "Utility Operations Portal",
-  bids:        "Flexibility Market — Bids",
+  aggregator:  "Aggregator Portal",
   settlement:  "Settlement Statements",
   energyflow:  "Energy Flow Diagram",
   config:      "Simulation Configuration",
