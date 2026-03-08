@@ -336,8 +336,8 @@ function DashboardScreen() {
         </div>
         <div className="kpi kpi-accent-navy">
           <div className="kpi-label">Aggregators</div>
-          <div className="kpi-value">{status.active_aggregators}<span className="kpi-unit">global</span></div>
-          <div className="kpi-note">6 countries</div>
+          <div className="kpi-value">{status.active_aggregators}<span className="kpi-unit">local</span></div>
+          <div className="kpi-note">3 feeders · Varanasi</div>
         </div>
         <div className="kpi kpi-accent-green">
           <div className="kpi-label">Active DERs</div>
@@ -725,49 +725,48 @@ function BidMarketScreen() {
 
 // ── Energy Flow ─────────────────────────────────────────────────────────────
 function EnergyFlowScreen() {
-  const [aggs, setAggs] = useState([]);
-  useEffect(()=>{ api("/api/market/aggregators").then(d=>setAggs(d.aggregators||[])); },[]);
-
-  const REGIONS = [
-    {id:"AGG-EU-01", flag:"🇩🇪", label:"Germany",   tso:"ENTSO-E",  portfolio:"Solar PV + BESS",     cap:45,  color:"#f59e0b"},
-    {id:"AGG-US-01", flag:"🇺🇸", label:"USA",        tso:"FERC",     portfolio:"Industrial DR + BESS", cap:80,  color:"#06b6d4"},
-    {id:"AGG-IN-01", flag:"🇮🇳", label:"India",      tso:"SLDC/CERC",portfolio:"Solar + BESS + EV",   cap:33,  color:"#22c55e"},
-    {id:"AGG-AU-01", flag:"🇦🇺", label:"Australia",  tso:"AEMO",     portfolio:"Solar + EV Fleet",     cap:25,  color:"#f59e0b"},
-    {id:"AGG-JP-01", flag:"🇯🇵", label:"Japan",      tso:"OCCTO",    portfolio:"BESS + Industrial DR", cap:15,  color:"#8b5cf6"},
-    {id:"AGG-GB-01", flag:"🇬🇧", label:"UK",         tso:"National Grid",portfolio:"Wind + BESS",     cap:20,  color:"#06b6d4"},
+  // Local Varanasi DER units (individual assets in pilot area)
+  const LOCAL_DERS = [
+    {id:"DER-1", type:"Solar PV", location:"Sigra",       kw:25,  feeder:"FDR-01", color:"#f59e0b"},
+    {id:"DER-2", type:"Solar PV", location:"Lanka",       kw:30,  feeder:"FDR-01", color:"#f59e0b"},
+    {id:"DER-3", type:"BESS",     location:"Bhelupur",    kw:20,  feeder:"FDR-02", color:"#06b6d4"},
+    {id:"DER-4", type:"Solar PV", location:"Cantonment",  kw:15,  feeder:"FDR-02", color:"#f59e0b"},
+    {id:"DER-5", type:"Solar PV", location:"Sarnath",     kw:18,  feeder:"FDR-03", color:"#f59e0b"},
+    {id:"DER-6", type:"BESS",     location:"Nadesar",     kw:12,  feeder:"FDR-03", color:"#22c55e"},
   ];
 
-  // Row layout: 6 rows × 78px
+  // Row layout: 6 DER units × 78px
   const ROW_H = 78;
-  const TILE_Y = (i) => 18 + i * ROW_H;   // top of each region tile
-  const TILE_CY = (i) => TILE_Y(i) + 32;  // centre-y of each region tile
+  const TILE_Y  = (i) => 18 + i * ROW_H;
+  const TILE_CY = (i) => TILE_Y(i) + 32;
 
-  // SVG dimensions
+  // SVG dimensions & column x positions
   const W = 900; const H = 510;
-  // Column x positions
-  const DER_X = 8;    const DER_W = 115;  // DER cluster box
-  const ARR_X1 = 123; const ARR_X2 = 180; // local energy arrow
-  const GRID_X = 180; const GRID_W = 80;  // local grid box
-  const CONN_X = 260;                      // right edge of region section
-  const VPP_X  = 355; const VPP_W = 125;  // L&T VPP box
+  const DER_X = 8;    const DER_W = 115;   // DER unit box
+  const GRID_X = 180; const GRID_W = 80;   // Local feeder box
+  const CONN_X = 260;                       // right edge of DER section
+  const VPP_X  = 355; const VPP_W = 130;   // L&T DERMS hub
   const VPP_CX = VPP_X + VPP_W / 2;
-  const VPP_Y  = 165; const VPP_H = 130;
+  const VPP_Y  = 145; const VPP_H = 180;
   const VPP_CY = VPP_Y + VPP_H / 2;
-  const UTL_X  = 680; const UTL_W = 115;  // Utility box
+  const SUB_X  = 580; const SUB_W = 100;   // 132kV Substation
+  const SUB_CX = SUB_X + SUB_W / 2;
+  const SUB_Y  = VPP_Y + 25; const SUB_H = 130;
+  const SUB_CY = SUB_Y + SUB_H / 2;
+  const UTL_X  = 770; const UTL_W = 118;   // DVVNL / SLDC-UP
   const UTL_CX = UTL_X + UTL_W / 2;
   const UTL_CY = VPP_CY;
 
   return (
     <div className="page">
-      <div className="section-title">🔀 Energy & Value Flow Diagram</div>
+      <div className="section-title">Local Energy Flow — Varanasi Pilot Grid</div>
       <div className="alert alert-info mb-16" style={{fontSize:11}}>
-        <b>Physical energy (green):</b> DERs inject power into their regional grid. L&T Neural Grid Platform coordinates dispatch signals (cyan), receives performance telemetry (purple), and manages settlement (amber) across all regions.
+        <b>Physical energy (green):</b> DERs inject power into local 33kV distribution feeders. L&T DERMS coordinates dispatch (cyan), receives telemetry (purple), and manages settlement (amber) within the Varanasi DVVNL grid.
       </div>
 
       <div className="flow-container" style={{overflowX:"auto"}}>
         <svg viewBox={`0 0 ${W} ${H}`} style={{width:"100%",minWidth:780,height:H}}>
           <defs>
-            {/* arrow markers */}
             <marker id="arr-energy" markerWidth="7" markerHeight="7" refX="6" refY="3" orient="auto">
               <path d="M0,0 L0,6 L7,3 z" fill="#22c55e"/>
             </marker>
@@ -785,32 +784,30 @@ function EnergyFlowScreen() {
             </marker>
           </defs>
 
-          {/* ═══ COLUMN HEADERS ═══ */}
-          <text x={DER_X+DER_W/2}    y="10" textAnchor="middle" fontSize="8" fill="#4a5568" fontWeight="700" letterSpacing="0.08em">DER CLUSTER</text>
-          <text x={GRID_X+GRID_W/2}  y="10" textAnchor="middle" fontSize="8" fill="#4a5568" fontWeight="700" letterSpacing="0.08em">LOCAL GRID</text>
-          <text x={VPP_CX}           y="10" textAnchor="middle" fontSize="8" fill="#C8202F"  fontWeight="700" letterSpacing="0.08em">L&T COORDINATION</text>
-          <text x={UTL_CX}           y="10" textAnchor="middle" fontSize="8" fill="#4a5568" fontWeight="700" letterSpacing="0.08em">UTILITY / TSO</text>
+          {/* Column headers */}
+          <text x={DER_X+DER_W/2}   y="10" textAnchor="middle" fontSize="8" fill="#4a5568" fontWeight="700" letterSpacing="0.08em">DER UNIT</text>
+          <text x={GRID_X+GRID_W/2} y="10" textAnchor="middle" fontSize="8" fill="#4a5568" fontWeight="700" letterSpacing="0.08em">LOCAL FEEDER</text>
+          <text x={VPP_CX}          y="10" textAnchor="middle" fontSize="8" fill="#C8202F"  fontWeight="700" letterSpacing="0.08em">L&T DERMS</text>
+          <text x={SUB_CX}          y="10" textAnchor="middle" fontSize="8" fill="#4a5568" fontWeight="700" letterSpacing="0.08em">132kV SUBSTATION</text>
+          <text x={UTL_CX}          y="10" textAnchor="middle" fontSize="8" fill="#4a5568" fontWeight="700" letterSpacing="0.08em">DVVNL / SLDC-UP</text>
 
-          {/* ═══ REGION TILES ═══ */}
-          {REGIONS.map((r, i) => {
+          {/* DER unit rows */}
+          {LOCAL_DERS.map((der, i) => {
             const ty = TILE_Y(i);
             const cy = TILE_CY(i);
-
-            // Connection from this region to L&T VPP
-            const connY = cy;
-            const vppEdgeY = Math.max(VPP_Y + 10, Math.min(VPP_Y + VPP_H - 10, connY));
+            const vppEdgeY = Math.max(VPP_Y + 10, Math.min(VPP_Y + VPP_H - 10, cy));
 
             return (
-              <g key={r.id}>
-                {/* ── DER box ── */}
+              <g key={der.id}>
+                {/* DER unit box */}
                 <rect x={DER_X} y={ty} width={DER_W} height={64} rx="6"
-                  fill="#0d1525" stroke={r.color} strokeWidth="1" opacity="0.9"/>
-                <text x={DER_X+58} y={ty+16} textAnchor="middle" fontSize="11">{r.flag}</text>
-                <text x={DER_X+58} y={ty+29} textAnchor="middle" fontSize="8" fill="#e2e8f0" fontWeight="600">{r.label}</text>
-                <text x={DER_X+58} y={ty+41} textAnchor="middle" fontSize="7" fill="#7a8fab">{r.portfolio}</text>
-                <text x={DER_X+58} y={ty+55} textAnchor="middle" fontSize="8" fill={r.color} fontWeight="700">{r.cap} MW</text>
+                  fill="#0d1525" stroke={der.color} strokeWidth="1.5" opacity="0.9"/>
+                <text x={DER_X+DER_W/2} y={ty+16} textAnchor="middle" fontSize="11" fill="#e2e8f0" fontWeight="700">{der.id}</text>
+                <text x={DER_X+DER_W/2} y={ty+29} textAnchor="middle" fontSize="7.5" fill={der.color}>{der.type}</text>
+                <text x={DER_X+DER_W/2} y={ty+41} textAnchor="middle" fontSize="7" fill="#7a8fab">{der.location}, Varanasi</text>
+                <text x={DER_X+DER_W/2} y={ty+55} textAnchor="middle" fontSize="8" fill={der.color} fontWeight="700">{der.kw} kW</text>
 
-                {/* ── Local energy arrow (DER → Local Grid) ── */}
+                {/* Energy arrow: DER → local feeder */}
                 <line x1={DER_X+DER_W} y1={cy} x2={GRID_X-2} y2={cy}
                   stroke="#22c55e" strokeWidth="2" markerEnd="url(#arr-energy)"/>
                 <circle r="3" fill="#22c55e" opacity="0.95">
@@ -818,84 +815,105 @@ function EnergyFlowScreen() {
                     path={`M ${DER_X+DER_W},${cy} L ${GRID_X},${cy}`}/>
                 </circle>
 
-                {/* ── Local grid box ── */}
+                {/* Local feeder box */}
                 <rect x={GRID_X} y={ty+10} width={GRID_W} height={44} rx="5"
                   fill="#0d1525" stroke="#1e2e4a" strokeWidth="1"/>
-                <text x={GRID_X+GRID_W/2} y={ty+30} textAnchor="middle" fontSize="9">⚡</text>
-                <text x={GRID_X+GRID_W/2} y={ty+42} textAnchor="middle" fontSize="7" fill="#7a8fab">{r.tso}</text>
+                <text x={GRID_X+GRID_W/2} y={ty+28} textAnchor="middle" fontSize="9">⚡</text>
+                <text x={GRID_X+GRID_W/2} y={ty+40} textAnchor="middle" fontSize="7.5" fill="#7a8fab">{der.feeder}</text>
+                <text x={GRID_X+GRID_W/2} y={ty+50} textAnchor="middle" fontSize="6.5" fill="#4a5568">33kV</text>
 
-                {/* ── Dispatch signal: L&T → Region (cyan, dashed) ── */}
-                <line x1={VPP_X} y1={vppEdgeY} x2={CONN_X+4} y2={connY-3}
+                {/* Dispatch signal: DERMS → DER (cyan, dashed) */}
+                <line x1={VPP_X} y1={vppEdgeY} x2={CONN_X+4} y2={cy-3}
                   stroke="#06b6d4" strokeWidth="1" strokeDasharray="4,3" opacity="0.7"
                   markerEnd="url(#arr-dispatch)"/>
 
-                {/* ── Telemetry: Region → L&T (purple, dashed) ── */}
-                <line x1={CONN_X} y1={connY+3} x2={VPP_X-2} y2={vppEdgeY+3}
+                {/* Telemetry: DER → DERMS (purple, dashed) */}
+                <line x1={CONN_X} y1={cy+3} x2={VPP_X-2} y2={vppEdgeY+3}
                   stroke="#8b5cf6" strokeWidth="1" strokeDasharray="3,4" opacity="0.6"
                   markerEnd="url(#arr-telemetry)"/>
 
-                {/* ── Settlement payment: L&T → Region (amber, dashed) ── */}
-                <line x1={VPP_X-4} y1={vppEdgeY-4} x2={CONN_X+4} y2={connY-8}
+                {/* Settlement: DERMS → DER area (amber, dashed) */}
+                <line x1={VPP_X-4} y1={vppEdgeY-4} x2={CONN_X+4} y2={cy-8}
                   stroke="#f59e0b" strokeWidth="0.8" strokeDasharray="5,3" opacity="0.5"
                   markerEnd="url(#arr-money)"/>
               </g>
             );
           })}
 
-          {/* ═══ L&T VPP HUB ═══ */}
+          {/* L&T DERMS hub */}
           <rect x={VPP_X} y={VPP_Y} width={VPP_W} height={VPP_H} rx="12"
             fill="#1E3A5F" stroke="#C8202F" strokeWidth="2.5"/>
           <text x={VPP_CX} y={VPP_Y+24} textAnchor="middle" fontSize="11" fontWeight="900" fill="white">L&T</text>
-          <text x={VPP_CX} y={VPP_Y+38} textAnchor="middle" fontSize="10" fontWeight="700" fill="white">Neural Grid</text>
-          <text x={VPP_CX} y={VPP_Y+52} textAnchor="middle" fontSize="8" fill="#93c5fd">Coordination Hub</text>
+          <text x={VPP_CX} y={VPP_Y+38} textAnchor="middle" fontSize="10" fontWeight="700" fill="white">DERMS / VPP</text>
+          <text x={VPP_CX} y={VPP_Y+52} textAnchor="middle" fontSize="8" fill="#93c5fd">Varanasi Pilot</text>
           <line x1={VPP_X+12} y1={VPP_Y+60} x2={VPP_X+VPP_W-12} y2={VPP_Y+60} stroke="#264a77"/>
-          <text x={VPP_CX} y={VPP_Y+74} textAnchor="middle" fontSize="7.5" fill="#7a8fab">Merit order clearing</text>
-          <text x={VPP_CX} y={VPP_Y+87} textAnchor="middle" fontSize="7.5" fill="#7a8fab">Portfolio: 218 MW / 763 DERs</text>
-          <text x={VPP_CX} y={VPP_Y+100} textAnchor="middle" fontSize="7.5" fill="#7a8fab">6 countries · 3 regions</text>
-          <text x={VPP_CX} y={VPP_Y+116} textAnchor="middle" fontSize="7.5" fill="#7a8fab">OASIS EML · OpenADR 2.0b</text>
+          <text x={VPP_CX} y={VPP_Y+74} textAnchor="middle" fontSize="7.5" fill="#7a8fab">IEEE 2030.5 · OpenADR 2.0b</text>
+          <text x={VPP_CX} y={VPP_Y+87} textAnchor="middle" fontSize="7.5" fill="#7a8fab">3 feeders · 9 DTs · local</text>
+          <text x={VPP_CX} y={VPP_Y+100} textAnchor="middle" fontSize="7.5" fill="#7a8fab">Merit order dispatch</text>
+          <text x={VPP_CX} y={VPP_Y+113} textAnchor="middle" fontSize="7.5" fill="#7a8fab">GE ADMS integration</text>
+          <text x={VPP_CX} y={VPP_Y+128} textAnchor="middle" fontSize="7.5" fill="#7a8fab">IEC 61968 / IEC 61970</text>
+          <text x={VPP_CX} y={VPP_Y+143} textAnchor="middle" fontSize="7.5" fill="#7a8fab">SLDC-UP reporting</text>
+          <text x={VPP_CX} y={VPP_Y+158} textAnchor="middle" fontSize="7.5" fill="#7a8fab">15-min AMI metering</text>
 
-          {/* ═══ L&T ↔ UTILITY ═══ */}
-          {/* Procurement event: Utility → L&T (red dashed) */}
-          <line x1={UTL_X} y1={UTL_CY-10} x2={VPP_X+VPP_W+2} y2={VPP_CY-10}
-            stroke="#C8202F" strokeWidth="1.2" strokeDasharray="5,3"
-            markerEnd="url(#arr-contract)"/>
-          <text x={(UTL_X+VPP_X+VPP_W)/2} y={UTL_CY-20} textAnchor="middle"
-            fontSize="7.5" fill="#C8202F">Procurement event</text>
-
-          {/* Flexibility confirmation: L&T → Utility (green) */}
-          <line x1={VPP_X+VPP_W+2} y1={VPP_CY} x2={UTL_X-2} y2={UTL_CY}
+          {/* DERMS → Substation: flexibility delivery (green) */}
+          <line x1={VPP_X+VPP_W+2} y1={VPP_CY} x2={SUB_X-2} y2={SUB_CY}
             stroke="#22c55e" strokeWidth="1.5" markerEnd="url(#arr-energy)"/>
-          <text x={(UTL_X+VPP_X+VPP_W)/2} y={UTL_CY+10} textAnchor="middle"
-            fontSize="7.5" fill="#22c55e">Flexibility confirmed</text>
+          <text x={(VPP_X+VPP_W+SUB_X)/2} y={VPP_CY-8} textAnchor="middle"
+            fontSize="7" fill="#22c55e">Flexibility delivered</text>
           <circle r="4" fill="#22c55e" opacity="0.9">
             <animateMotion dur="2.2s" repeatCount="indefinite"
-              path={`M ${VPP_X+VPP_W},${VPP_CY} L ${UTL_X},${UTL_CY}`}/>
+              path={`M ${VPP_X+VPP_W},${VPP_CY} L ${SUB_X},${SUB_CY}`}/>
           </circle>
 
-          {/* Payment: Utility → L&T (amber) */}
+          {/* Substation → DERMS: dispatch request (red dashed) */}
+          <line x1={SUB_X-2} y1={SUB_CY-10} x2={VPP_X+VPP_W+2} y2={VPP_CY-10}
+            stroke="#C8202F" strokeWidth="1.2" strokeDasharray="5,3"
+            markerEnd="url(#arr-contract)"/>
+          <text x={(VPP_X+VPP_W+SUB_X)/2} y={VPP_CY-22} textAnchor="middle"
+            fontSize="7" fill="#C8202F">Dispatch request</text>
+
+          {/* 132kV Substation box */}
+          <rect x={SUB_X} y={SUB_Y} width={SUB_W} height={SUB_H} rx="10"
+            fill="#0d1525" stroke="#1e2e4a" strokeWidth="1.5"/>
+          <text x={SUB_CX} y={SUB_Y+24} textAnchor="middle" fontSize="13">🏭</text>
+          <text x={SUB_CX} y={SUB_Y+40} textAnchor="middle" fontSize="8" fontWeight="700" fill="white">S-VAR-001</text>
+          <text x={SUB_CX} y={SUB_Y+54} textAnchor="middle" fontSize="7" fill="#7a8fab">Varanasi Main</text>
+          <text x={SUB_CX} y={SUB_Y+67} textAnchor="middle" fontSize="7" fill="#7a8fab">132kV Substation</text>
+          <text x={SUB_CX} y={SUB_Y+81} textAnchor="middle" fontSize="7" fill="#7a8fab">3 feeders out</text>
+          <text x={SUB_CX} y={SUB_Y+95} textAnchor="middle" fontSize="7" fill="#7a8fab">24 MVA total</text>
+          <text x={SUB_CX} y={SUB_Y+109} textAnchor="middle" fontSize="7" fill="#7a8fab">SCADA connected</text>
+
+          {/* Substation → DVVNL: grid export (green) */}
+          <line x1={SUB_X+SUB_W+2} y1={SUB_CY} x2={UTL_X-2} y2={UTL_CY}
+            stroke="#22c55e" strokeWidth="1.5" markerEnd="url(#arr-energy)"/>
+          <text x={(SUB_X+SUB_W+UTL_X)/2} y={SUB_CY-8} textAnchor="middle"
+            fontSize="7" fill="#22c55e">Grid export</text>
+
+          {/* DVVNL → DERMS: settlement payment (amber) */}
           <line x1={UTL_X} y1={UTL_CY+10} x2={VPP_X+VPP_W+2} y2={VPP_CY+10}
             stroke="#f59e0b" strokeWidth="1" strokeDasharray="4,3"
             markerEnd="url(#arr-money)"/>
-          <text x={(UTL_X+VPP_X+VPP_W)/2} y={UTL_CY+22} textAnchor="middle"
-            fontSize="7.5" fill="#f59e0b">Settlement payment</text>
+          <text x={(UTL_X+VPP_X+VPP_W)/2} y={UTL_CY+24} textAnchor="middle"
+            fontSize="7" fill="#f59e0b">Settlement (REMC)</text>
 
-          {/* ═══ UTILITY BOX ═══ */}
+          {/* DVVNL / SLDC-UP box */}
           <rect x={UTL_X} y={VPP_Y+20} width={UTL_W} height={VPP_H-40} rx="10"
             fill="#0d1525" stroke="#1e2e4a" strokeWidth="1.5"/>
-          <text x={UTL_CX} y={VPP_Y+48} textAnchor="middle" fontSize="11">⚡</text>
-          <text x={UTL_CX} y={VPP_Y+63} textAnchor="middle" fontSize="9" fontWeight="700" fill="white">Utility / TSO</text>
-          <text x={UTL_CX} y={VPP_Y+78} textAnchor="middle" fontSize="7" fill="#7a8fab">Procures flexibility</text>
-          <text x={UTL_CX} y={VPP_Y+91} textAnchor="middle" fontSize="7" fill="#7a8fab">from L&T portfolio</text>
-          <text x={UTL_CX} y={VPP_Y+106} textAnchor="middle" fontSize="7" fill="#7a8fab">CERC/ENTSO-E/FERC</text>
+          <text x={UTL_CX} y={VPP_Y+44} textAnchor="middle" fontSize="13">⚡</text>
+          <text x={UTL_CX} y={VPP_Y+60} textAnchor="middle" fontSize="9" fontWeight="700" fill="white">DVVNL</text>
+          <text x={UTL_CX} y={VPP_Y+74} textAnchor="middle" fontSize="7" fill="#7a8fab">SLDC-UP / CERC</text>
+          <text x={UTL_CX} y={VPP_Y+88} textAnchor="middle" fontSize="7" fill="#7a8fab">Procures DR flex</text>
+          <text x={UTL_CX} y={VPP_Y+102} textAnchor="middle" fontSize="7" fill="#7a8fab">from L&T DERMS</text>
+          <text x={UTL_CX} y={VPP_Y+116} textAnchor="middle" fontSize="7" fill="#7a8fab">REMC settlement</text>
 
-          {/* ═══ LEGEND ═══ */}
+          {/* Legend */}
           <g transform={`translate(8,${H-52})`}>
             <rect x="0" y="0" width={W-16} height="46" rx="6" fill="#0d1525" stroke="#1e2e4a"/>
             {[
-              {x:10,  color:"#22c55e", dash:"",     label:"Physical energy flow (within region only)"},
-              {x:210, color:"#06b6d4", dash:"4,3",  label:"Dispatch signal (L&T → Region, OpenADR 2.0b)"},
-              {x:430, color:"#8b5cf6", dash:"3,4",  label:"Telemetry / performance (Region → L&T, IEC 61968-9)"},
-              {x:650, color:"#f59e0b", dash:"5,3",  label:"Settlement payment (UN/EDIFACT MSCONS)"},
+              {x:10,  color:"#22c55e", dash:"",     label:"Physical energy (DERs → local 33kV feeder → substation)"},
+              {x:228, color:"#06b6d4", dash:"4,3",  label:"Dispatch signal (L&T DERMS → Feeder, IEEE 2030.5)"},
+              {x:440, color:"#8b5cf6", dash:"3,4",  label:"Telemetry / metering (Feeder → DERMS, IEC 61968-9)"},
+              {x:650, color:"#f59e0b", dash:"5,3",  label:"Settlement payment (REMC / DVVNL)"},
             ].map(l => (
               <g key={l.x}>
                 <line x1={l.x} y1="18" x2={l.x+28} y2="18"
@@ -904,7 +922,7 @@ function EnergyFlowScreen() {
               </g>
             ))}
             <text x="10" y="38" fontSize="8" fill="#4a5568">
-              Red dashed ──── Procurement event (Utility → L&T) · Green solid ──── Flexibility delivered confirmation (L&T → Utility)
+              Red dashed ──── Dispatch request (DVVNL/Substation → DERMS) · Green solid ──── Flexibility delivered (DERMS → Substation / grid)
             </text>
           </g>
         </svg>
@@ -913,33 +931,33 @@ function EnergyFlowScreen() {
       {/* Architecture summary */}
       <div className="grid-3 mt-20">
         <div className="card-sm">
-          <div className="card-title mb-16">Regional DER Layer</div>
+          <div className="card-title mb-16">Local DER Layer</div>
           <div style={{fontSize:12,color:"var(--muted)",lineHeight:1.9}}>
-            <div>• DERs inject energy into the regional grid</div>
+            <div>• DERs inject energy into local 33kV feeders</div>
             <div>• IEEE 2030.5 SEP 2.0 device control</div>
-            <div>• IEEE 2030.5 SEP 2.0 device control</div>
-            <div>• 15-min AMI metering per region</div>
-            <div>• Each region has its own TSO</div>
+            <div>• 15-min AMI metering per distribution transformer</div>
+            <div>• 3 feeders · 9 DTs · Varanasi pilot area</div>
+            <div>• DVVNL distribution grid (UP state)</div>
           </div>
         </div>
         <div className="card-sm">
-          <div className="card-title mb-16">L&T Coordination Layer</div>
+          <div className="card-title mb-16">L&T DERMS Coordination</div>
           <div style={{fontSize:12,color:"var(--muted)",lineHeight:1.9}}>
-            <div>• Global VPP operator &amp; super-aggregator</div>
-            <div>• Issues OpenADR 2.0b dispatch signals</div>
-            <div>• Aggregates global portfolio bids</div>
-            <div>• Merit order market clearing</div>
-            <div>• T+2 UN/EDIFACT settlement</div>
+            <div>• Local VPP operator &amp; DER aggregator</div>
+            <div>• Issues IEEE 2030.5 dispatch signals</div>
+            <div>• Merit order dispatch clearing</div>
+            <div>• GE ADMS integration (IEC 61970/61968)</div>
+            <div>• T+1 settlement with DVVNL / REMC</div>
           </div>
         </div>
         <div className="card-sm">
-          <div className="card-title mb-16">What Actually Flows Globally</div>
+          <div className="card-title mb-16">What Flows Locally</div>
           <div style={{fontSize:12,color:"var(--muted)",lineHeight:1.9}}>
-            <div>• <span style={{color:"#06b6d4"}}>Dispatch commands</span> (OpenADR)</div>
-            <div>• <span style={{color:"#8b5cf6"}}>Meter data & telemetry</span> (IEC 61968-9)</div>
-            <div>• <span style={{color:"#f59e0b"}}>Settlement payments</span> (MSCONS)</div>
-            <div>• <span style={{color:"#C8202F"}}>Procurement contracts</span> (OASIS EML)</div>
-            <div>• <span style={{color:"#22c55e"}}>Flexibility confirmations</span></div>
+            <div>• <span style={{color:"#06b6d4"}}>Dispatch commands</span> (IEEE 2030.5)</div>
+            <div>• <span style={{color:"#8b5cf6"}}>Meter data &amp; telemetry</span> (IEC 61968-9)</div>
+            <div>• <span style={{color:"#f59e0b"}}>Settlement payments</span> (REMC/DVVNL)</div>
+            <div>• <span style={{color:"#C8202F"}}>Dispatch requests</span> (SLDC-UP)</div>
+            <div>• <span style={{color:"#22c55e"}}>Flexibility confirmations</span> (local grid)</div>
           </div>
         </div>
       </div>
