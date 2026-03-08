@@ -187,6 +187,32 @@
   /* ── Settlement ── */
   .settlement-formula { background: var(--bg3); border-radius: 8px; padding: 14px; font-size: 12px; font-family: monospace; color: #fbbf24; line-height: 1.9; }
 
+  /* ── Login ── */
+  .login-root { min-height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; background: var(--bg); padding: 24px; }
+  .login-header { text-align: center; margin-bottom: 36px; }
+  .login-header h1 { font-size: 22px; font-weight: 800; color: #fff; margin-bottom: 4px; }
+  .login-header p  { font-size: 13px; color: var(--muted); }
+  .login-cards { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; width: 100%; max-width: 720px; }
+  .login-card { background: var(--bg2); border: 1px solid var(--border); border-radius: 14px; padding: 28px 24px; cursor: pointer; transition: 0.2s; }
+  .login-card:hover { border-color: var(--lt-red); box-shadow: 0 0 0 1px var(--lt-red); }
+  .login-card.selected { border-color: var(--lt-red); box-shadow: 0 0 0 2px var(--lt-red); }
+  .login-card-icon { font-size: 36px; margin-bottom: 12px; }
+  .login-card-title { font-size: 16px; font-weight: 700; color: #fff; margin-bottom: 4px; }
+  .login-card-sub { font-size: 12px; color: var(--muted); line-height: 1.6; margin-bottom: 16px; }
+  .login-card-features { list-style: none; padding: 0; margin: 0 0 20px; }
+  .login-card-features li { font-size: 11px; color: var(--muted); padding: 3px 0; }
+  .login-card-features li::before { content: "✓ "; color: var(--green); }
+  .login-form { margin-top: 4px; }
+  .login-demo { font-size: 10px; color: var(--muted); margin-bottom: 4px; background: var(--bg3); padding: 4px 8px; border-radius: 4px; font-family: monospace; }
+  .login-error { font-size: 11px; color: var(--red); margin-top: 8px; text-align: center; }
+  .login-footer { margin-top: 28px; font-size: 11px; color: var(--muted); text-align: center; }
+
+  /* ── Tabs ── */
+  .tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--border); margin-bottom: 16px; }
+  .tab  { padding: 8px 16px; font-size: 12px; cursor: pointer; color: var(--muted); border-bottom: 2px solid transparent; margin-bottom: -1px; transition: 0.15s; }
+  .tab:hover  { color: var(--text); }
+  .tab.active { color: #fff; border-bottom-color: var(--lt-red); font-weight: 600; }
+
   /* ── Scrollbar ── */
   ::-webkit-scrollbar { width: 5px; height: 5px; }
   ::-webkit-scrollbar-track { background: var(--bg2); }
@@ -249,54 +275,6 @@ function LTLogo() {
 }
 
 // ── Sidebar ────────────────────────────────────────────────────────────────
-const NAV = [
-  { section: "OVERVIEW" },
-  { key: "dashboard",    label: "Dashboard",        icon: "⬛" },
-  { section: "MARKET" },
-  { key: "utility",      label: "Utility Portal",   icon: "⚡" },
-  { key: "aggregator",   label: "Aggregator Portal", icon: "🏭" },
-  { key: "settlement",   label: "Settlement",        icon: "💰" },
-  { section: "PLATFORM" },
-  { key: "energyflow",   label: "Energy Flow",       icon: "🔀" },
-  { key: "config",       label: "Sim Config",        icon: "⚙️" },
-  { section: "REFERENCE" },
-  { key: "glossary",     label: "Glossary",          icon: "📖" },
-  { key: "integration",  label: "Integration Guide", icon: "🔌" },
-];
-
-function Sidebar({ active, onNav }) {
-  return (
-    <div id="sidebar">
-      <div className="logo-area">
-        <div className="logo-lt">
-          <LTLogo/>
-          <div>
-            <div className="logo-name">Neural Grid</div>
-            <div className="logo-name">Platform</div>
-            <div className="logo-sub">Larsen & Toubro DES</div>
-          </div>
-        </div>
-        <span className="logo-badge">VPP SUPER-AGGREGATOR</span>
-      </div>
-      <nav>
-        {NAV.map((n, i) =>
-          n.section
-            ? <div key={i} className="nav-section">{n.section}</div>
-            : <div key={n.key} className={`nav-item${active===n.key?" active":""}`} onClick={()=>onNav(n.key)}>
-                <span className="nav-icon">{n.icon}</span>{n.label}
-              </div>
-        )}
-      </nav>
-      <div className="sidebar-footer">
-        <div><b style={{color:"#fff"}}>L&T DES</b> &mdash; Global Energy</div>
-        <div>Platform v2.1.0</div>
-        <div style={{marginTop:4}}>
-          <span className="badge badge-green">LIVE SIM</span>
-        </div>
-      </div>
-    </div>
-  );
-}
 
 // ── Dashboard ──────────────────────────────────────────────────────────────
 function DashboardScreen() {
@@ -1560,25 +1538,208 @@ const TITLES = {
   integration: "Integration Guide",
 };
 
+// ── Demo credentials ─────────────────────────────────────────────────────────
+const DEMO_CREDS = {
+  utility:    [{ user:"dvvnl_ops",  pass:"dvvnl@123" }, { user:"sldc_user", pass:"sldc@123" }],
+  aggregator: [{ user:"agg_varanasi", pass:"agg@123"  }, { user:"der_mgr",   pass:"der@123"  }],
+};
+
+// ── Login Screen ──────────────────────────────────────────────────────────────
+function LoginScreen({ onLogin }) {
+  const [role, setRole]     = useState(null);   // "utility" | "aggregator"
+  const [user, setUser]     = useState("");
+  const [pass, setPass]     = useState("");
+  const [error, setError]   = useState("");
+  const [busy, setBusy]     = useState(false);
+
+  const ROLES = [
+    {
+      id: "utility",
+      icon: "⚡",
+      title: "Utility / DVVNL",
+      sub: "Dakshinanchal Vidyut Vitran Nigam Ltd · SLDC-UP operations",
+      features: ["Publish DR procurement events", "View system load forecast", "Monitor all aggregators", "Settlement oversight"],
+      demo: DEMO_CREDS.utility[0],
+    },
+    {
+      id: "aggregator",
+      icon: "🏭",
+      title: "DER Aggregator",
+      sub: "Manage your enrolled DER fleet and respond to DR events",
+      features: ["View my DER fleet (DER-1 to DER-6)", "Respond to DR events with bids", "Track earnings & settlements", "CUF / SoC monitoring"],
+      demo: DEMO_CREDS.aggregator[0],
+    },
+  ];
+
+  const handleLogin = () => {
+    if (!role) { setError("Select a portal to continue."); return; }
+    setBusy(true); setError("");
+    setTimeout(() => {
+      const valid = DEMO_CREDS[role].some(c => c.user === user.trim() && c.pass === pass);
+      if (valid) {
+        onLogin(role, user.trim());
+      } else {
+        setError("Invalid credentials. Check the demo hints below each field.");
+        setBusy(false);
+      }
+    }, 600);
+  };
+
+  const sel = ROLES.find(r => r.id === role);
+
+  return (
+    <div className="login-root">
+      <div className="login-header">
+        <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:12,marginBottom:12}}>
+          <LTLogo/>
+          <div style={{textAlign:"left"}}>
+            <div style={{fontSize:18,fontWeight:800,color:"#fff"}}>Neural Grid Platform</div>
+            <div style={{fontSize:11,color:"var(--muted)"}}>Larsen &amp; Toubro DES · Varanasi Pilot</div>
+          </div>
+        </div>
+        <p>Select your portal and sign in to continue</p>
+      </div>
+
+      {/* Role cards */}
+      <div className="login-cards">
+        {ROLES.map(r => (
+          <div key={r.id} className={`login-card${role===r.id?" selected":""}`} onClick={()=>{ setRole(r.id); setUser(r.demo.user); setPass(r.demo.pass); setError(""); }}>
+            <div className="login-card-icon">{r.icon}</div>
+            <div className="login-card-title">{r.title}</div>
+            <div className="login-card-sub">{r.sub}</div>
+            <ul className="login-card-features">
+              {r.features.map(f => <li key={f}>{f}</li>)}
+            </ul>
+            <div style={{fontSize:10,color:"var(--muted)",marginBottom:6,fontWeight:700,textTransform:"uppercase",letterSpacing:"0.06em"}}>Demo credentials</div>
+            <div className="login-demo">user: {r.demo.user}</div>
+            <div className="login-demo">pass: {r.demo.pass}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* Login form */}
+      {role && (
+        <div style={{width:"100%",maxWidth:360,marginTop:28,background:"var(--bg2)",border:"1px solid var(--border)",borderRadius:12,padding:"24px"}}>
+          <div style={{fontSize:14,fontWeight:700,color:"#fff",marginBottom:16}}>
+            {sel.icon} Sign in to {sel.title}
+          </div>
+          <div className="form-group">
+            <label className="form-label">Username</label>
+            <input className="form-input" value={user} onChange={e=>setUser(e.target.value)} onKeyDown={e=>e.key==="Enter"&&handleLogin()} autoFocus/>
+          </div>
+          <div className="form-group">
+            <label className="form-label">Password</label>
+            <input className="form-input" type="password" value={pass} onChange={e=>setPass(e.target.value)} onKeyDown={e=>e.key==="Enter"&&handleLogin()}/>
+          </div>
+          {error && <div className="login-error">{error}</div>}
+          <button className="btn btn-primary" style={{width:"100%",marginTop:4}} onClick={handleLogin} disabled={busy}>
+            {busy ? <><span className="spinner" style={{width:14,height:14,borderWidth:2}}/> Signing in…</> : `Sign in as ${sel.title}`}
+          </button>
+        </div>
+      )}
+
+      <div className="login-footer">
+        L&amp;T DES · Varanasi DERMS Pilot · Prototype v2.1.0<br/>
+        <span style={{color:"var(--amber)"}}>Demo mode — credentials are pre-filled when you select a portal</span>
+      </div>
+    </div>
+  );
+}
+
+// ── Nav config per role ───────────────────────────────────────────────────────
+const NAV_BY_ROLE = {
+  utility: [
+    { section: "OVERVIEW" },
+    { key: "dashboard",    label: "Dashboard",        icon: "⬛" },
+    { section: "MARKET" },
+    { key: "utility",      label: "Utility Portal",   icon: "⚡" },
+    { key: "settlement",   label: "Settlement",        icon: "💰" },
+    { section: "PLATFORM" },
+    { key: "energyflow",   label: "Energy Flow",       icon: "🔀" },
+    { key: "config",       label: "Sim Config",        icon: "⚙️" },
+    { section: "REFERENCE" },
+    { key: "glossary",     label: "Glossary",          icon: "📖" },
+    { key: "integration",  label: "Integration Guide", icon: "🔌" },
+  ],
+  aggregator: [
+    { section: "OVERVIEW" },
+    { key: "dashboard",    label: "Dashboard",        icon: "⬛" },
+    { section: "MY PORTAL" },
+    { key: "aggregator",   label: "Aggregator Portal", icon: "🏭" },
+    { key: "settlement",   label: "My Settlements",    icon: "💰" },
+    { section: "PLATFORM" },
+    { key: "energyflow",   label: "Energy Flow",       icon: "🔀" },
+    { section: "REFERENCE" },
+    { key: "glossary",     label: "Glossary",          icon: "📖" },
+    { key: "integration",  label: "Integration Guide", icon: "🔌" },
+  ],
+};
+
+const DEFAULT_SCREEN = { utility: "utility", aggregator: "aggregator" };
+const ROLE_LABEL     = { utility: "DVVNL Ops", aggregator: "DER Aggregator" };
+const ROLE_COLOR     = { utility: "#06b6d4", aggregator: "#22c55e" };
+
 function App() {
+  const [auth, setAuth]     = useState(null);   // { role, user }
   const [screen, setScreen] = useState("dashboard");
-  const [now, setNow] = useState(new Date());
+  const [now, setNow]       = useState(new Date());
   useEffect(()=>{ const t=setInterval(()=>setNow(new Date()),60000); return()=>clearInterval(t); },[]);
 
-  const Screen = SCREENS[screen] || DashboardScreen;
+  const handleLogin = (role, user) => {
+    setAuth({ role, user });
+    setScreen(DEFAULT_SCREEN[role] || "dashboard");
+  };
+
+  const handleLogout = () => { setAuth(null); setScreen("dashboard"); };
+
+  if (!auth) return <LoginScreen onLogin={handleLogin}/>;
+
+  const navItems = NAV_BY_ROLE[auth.role] || NAV;
+  const Screen   = SCREENS[screen] || DashboardScreen;
+
   return (
     <>
-      <Sidebar active={screen} onNav={setScreen}/>
+      <div id="sidebar">
+        <div className="logo-area">
+          <div className="logo-lt">
+            <LTLogo/>
+            <div>
+              <div className="logo-name">Neural Grid</div>
+              <div className="logo-name">Platform</div>
+              <div className="logo-sub">Larsen &amp; Toubro DES</div>
+            </div>
+          </div>
+          <span className="logo-badge" style={{background: ROLE_COLOR[auth.role]}}>
+            {ROLE_LABEL[auth.role].toUpperCase()}
+          </span>
+        </div>
+        <nav>
+          {navItems.map((n, i) =>
+            n.section
+              ? <div key={i} className="nav-section">{n.section}</div>
+              : <div key={n.key} className={`nav-item${screen===n.key?" active":""}`} onClick={()=>setScreen(n.key)}>
+                  <span className="nav-icon">{n.icon}</span>{n.label}
+                </div>
+          )}
+        </nav>
+        <div className="sidebar-footer">
+          <div style={{marginBottom:6}}>
+            <span style={{color:"#fff",fontWeight:700}}>{auth.user}</span>
+            <span style={{color:"var(--muted)"}}> · {ROLE_LABEL[auth.role]}</span>
+          </div>
+          <button className="btn btn-ghost btn-sm" style={{width:"100%"}} onClick={handleLogout}>Sign out</button>
+        </div>
+      </div>
       <div id="main">
         <div className="topbar">
           <div className="topbar-title">{TITLES[screen]}</div>
           <div style={{display:"flex",alignItems:"center",gap:16}}>
             <div className="topbar-meta">
               <span className="live-dot"/>
-              <span>L&T Neural Grid Platform &mdash; Super-Aggregator VPP &mdash; </span>
+              <span>L&amp;T Neural Grid Platform &mdash; {ROLE_LABEL[auth.role]} &mdash; </span>
               <span>{now.toLocaleString("en-IN",{timeZone:"Asia/Kolkata",hour12:false,hour:"2-digit",minute:"2-digit"})} IST</span>
             </div>
-            <a href="/ui" style={{fontSize:11,color:"var(--muted)",textDecoration:"none",border:"1px solid var(--border)",padding:"4px 10px",borderRadius:5,whiteSpace:"nowrap"}} title="Back to DERMS Dashboard">
+            <a href="/ui" style={{fontSize:11,color:"var(--muted)",textDecoration:"none",border:"1px solid var(--border)",padding:"4px 10px",borderRadius:5,whiteSpace:"nowrap"}}>
               ← DERMS
             </a>
           </div>
