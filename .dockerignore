@@ -1,0 +1,14 @@
+*.db
+*.db-shm
+*.db-wal
+__pycache__
+*.pyc
+*.pyo
+.env
+.venv
+venv/
+*.log
+.DS_Store
+.git
+PRODUCTION_GUIDE.md
+SYSTEM_DESIGN.md

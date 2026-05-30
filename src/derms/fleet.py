@@ -36,6 +36,7 @@ _alert_counter: int = 0
 async def initialize_fleet():
     """Initialize fleet from the ADMS topology and aggregator definitions."""
     await _seed_topology()
+    await _seed_real_pilot_ders()
     logger.info("Fleet manager initialized")
 
 
@@ -79,6 +80,96 @@ async def _seed_topology():
 
     # Rebuild caches
     await _rebuild_caches()
+
+
+async def _seed_real_pilot_ders():
+    """
+    Seed the 10 real DERs from Lanka Feeder (DT REPORT.xlsx data).
+    Uses a dedicated aggregator 'AGG-LK1' (no IEEE 2030.5 simulation — real data).
+    Skips if already seeded.
+    """
+    from src.data.real_pilot_data import LANKA_DERS
+
+    async with AsyncSessionLocal() as db:
+        # Ensure LK1 aggregator exists
+        agg_id = "AGG-LK1"
+        agg_existing = await db.execute(select(Aggregator).where(Aggregator.agg_id == agg_id))
+        if not agg_existing.scalar_one_or_none():
+            agg = Aggregator(
+                agg_id=agg_id,
+                name="Lanka Feeder Real Pilot — Direct (no aggregator)",
+                status="Online",
+                last_seen=datetime.now(timezone.utc),
+            )
+            db.add(agg)
+            _aggregator_cache[agg_id] = {
+                "agg_id": agg_id, "name": agg.name,
+                "status": "Online", "last_seen": datetime.now(timezone.utc).isoformat(),
+            }
+
+        for der_data in LANKA_DERS:
+            existing = await db.execute(
+                select(DERAsset).where(DERAsset.der_id == der_data["der_id"])
+            )
+            if existing.scalar_one_or_none():
+                continue
+
+            # Locate GPS from DT data
+            from src.data.real_pilot_data import LANKA_DT_BY_ID
+            dt_info = LANKA_DT_BY_ID.get(der_data["dt_id"], {})
+
+            der = DERAsset(
+                der_id=der_data["der_id"],
+                aggregator_id=agg_id,
+                dt_id=der_data["dt_id"],
+                feeder_id=der_data["feeder_id"],
+                consumer_id=der_data["consumer_id"],
+                meter_id=der_data["meter_id"],
+                der_type=DERType.SOLAR_PV,
+                nameplate_kw=der_data["nameplate_kw"],
+                inverter_oem=der_data.get("inverter_oem", "Unknown"),
+                commission_date=der_data.get("commission_date"),
+                location_name=dt_info.get("name", der_data["dt_id"]),
+                lat=dt_info.get("lat", 25.2677),
+                lng=dt_info.get("lng", 82.9913),
+                status=DERStatus.ONLINE,
+                current_kw=0.0,
+                last_update=datetime.now(timezone.utc),
+            )
+            db.add(der)
+
+            _der_cache[der_data["der_id"]] = {
+                "der_id": der_data["der_id"],
+                "aggregator_id": agg_id,
+                "dt_id": der_data["dt_id"],
+                "feeder_id": der_data["feeder_id"],
+                "consumer_id": der_data["consumer_id"],
+                "meter_id": der_data["meter_id"],
+                "der_type": "Solar PV",
+                "nameplate_kw": der_data["nameplate_kw"],
+                "inverter_oem": der_data.get("inverter_oem", "Unknown"),
+                "location_name": dt_info.get("name", der_data["dt_id"]),
+                "lat": dt_info.get("lat", 25.2677),
+                "lng": dt_info.get("lng", 82.9913),
+                "status": "Online",
+                "current_kw": 0.0,
+                "current_kvar": 0.0,
+                "voltage_v": 230.0,
+                "soc_pct": None,
+                "cuf_pct": 0.0,
+                "pr_pct": 0.0,
+                "available_kw": der_data["nameplate_kw"],
+                "curtailment_pct": 100.0,
+                "last_update": datetime.now(timezone.utc).isoformat(),
+                # Real data metadata
+                "commission_date": der_data.get("commission_date"),
+                "metering_type": der_data.get("metering_type", "NET"),
+                "monthly_kwh": der_data.get("monthly_kwh"),
+                "data_source": "real",
+            }
+
+        await db.commit()
+    logger.info(f"Real pilot DERs seeded: {len(LANKA_DERS)} DERs on Lanka Feeder (LK1)")
 
 
 async def _rebuild_caches():
@@ -369,7 +460,12 @@ def add_alert(alert_type: str, priority: str, message: str, module: str,
         "module": module,
         "resource_id": resource_id,
         "resource_type": resource_type,
+        "state": "OPEN",
         "resolved": False,
+        "acknowledged_at": None,
+        "acknowledged_by": None,
+        "resolved_at": None,
+        "resolved_by": None,
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
     _alerts.insert(0, alert)
@@ -377,6 +473,31 @@ def add_alert(alert_type: str, priority: str, message: str, module: str,
         _alerts.pop()
     logger.info(f"Alert [{priority}]: {message}")
     return alert
+
+
+def acknowledge_alert(alert_id: str, user: str = "operator") -> Optional[dict]:
+    for a in _alerts:
+        if a["id"] == alert_id:
+            if a["state"] == "OPEN":
+                a["state"] = "ACKNOWLEDGED"
+                a["acknowledged_at"] = datetime.now(timezone.utc).isoformat()
+                a["acknowledged_by"] = user
+            return a
+    return None
+
+
+def resolve_alert(alert_id: str, user: str = "operator") -> Optional[dict]:
+    for a in _alerts:
+        if a["id"] == alert_id:
+            a["state"] = "RESOLVED"
+            a["resolved"] = True
+            a["resolved_at"] = datetime.now(timezone.utc).isoformat()
+            a["resolved_by"] = user
+            if not a.get("acknowledged_at"):
+                a["acknowledged_at"] = a["resolved_at"]
+                a["acknowledged_by"] = user
+            return a
+    return None
 
 
 # ─── Query Functions ──────────────────────────────────────────────────────────

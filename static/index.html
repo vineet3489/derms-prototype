@@ -4,6 +4,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>DERMS Prototype — Varanasi Pilot</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="https://unpkg.com/react@18.2.0/umd/react.production.min.js"></script>
 <script src="https://unpkg.com/react-dom@18.2.0/umd/react-dom.production.min.js"></script>
 <script src="https://unpkg.com/@babel/standalone@7.23.6/babel.min.js"></script>
@@ -108,7 +110,7 @@ tr:hover td { background: var(--bg-hover); }
 .int-detail { font-size: 10px; color: var(--text-muted); }
 /* Charts */
 .recharts-tooltip-wrapper .recharts-default-tooltip { background: var(--bg-card) !important; border: 1px solid var(--border) !important; border-radius: 8px; }
-/* Map placeholder */
+/* Map */
 .map-placeholder { background: linear-gradient(135deg, #0d1a2e 0%, #0a2540 100%); border-radius: 8px; position: relative; overflow: hidden; }
 .map-grid { position: absolute; top: 0; left: 0; right: 0; bottom: 0; opacity: 0.1; background-image: linear-gradient(rgba(96,165,250,0.5) 1px, transparent 1px), linear-gradient(90deg, rgba(96,165,250,0.5) 1px, transparent 1px); background-size: 30px 30px; }
 .der-marker { position: absolute; width: 12px; height: 12px; border-radius: 50%; transform: translate(-50%, -50%); cursor: pointer; }
@@ -117,6 +119,11 @@ tr:hover td { background: var(--bg-hover); }
 .der-marker.curtailed { background: var(--purple); }
 @keyframes glow { 0%,100%{box-shadow:0 0 6px var(--success)} 50%{box-shadow:0 0 14px var(--success)} }
 .feeder-line { position: absolute; background: var(--cyan); height: 2px; opacity: 0.5; transform-origin: left center; }
+.leaflet-map-wrap { border-radius: 8px; overflow: hidden; }
+.leaflet-map-wrap .leaflet-container { background: #0d1a2e; }
+.leaflet-popup-content-wrapper { background: #151F32; border: 1px solid #2A3A52; color: #F1F5F9; border-radius: 8px; }
+.leaflet-popup-tip { background: #151F32; }
+.leaflet-popup-content { margin: 10px 14px; font-size: 12px; }
 /* Voltage gauge */
 .voltage-cell { font-weight: 600; }
 .v-ok { color: var(--success); }
@@ -285,78 +292,256 @@ function FeederBar({ feeder }) {
   );
 }
 
-// ─── GIS Map Component ────────────────────────────────────────────────────────
+// ─── Leaflet GIS Map Component ────────────────────────────────────────────────
 
-function GISMap({ ders, dts, feeders }) {
+function LeafletMap({ ders, dts, height = 300, onDTClick }) {
+  const containerRef = useRef(null);
   const mapRef = useRef(null);
-  const [tooltip, setTooltip] = useState(null);
+  const [layers, setLayers] = React.useState({ dts: true, ders: true, oe: true, rpf: true, alerts: false });
+  const [oeData, setOeData] = React.useState({});
+  const [rpfData, setRpfData] = React.useState({});
 
-  // Project lat/lng to map pixels [0-100%]
-  const latRange = [25.25, 25.40];
-  const lngRange = [82.93, 83.06];
-  const project = (lat, lng) => ({
-    x: ((lng - lngRange[0]) / (lngRange[1] - lngRange[0])) * 100,
-    y: ((latRange[1] - lat) / (latRange[1] - latRange[0])) * 100,
+  // Fetch OE + RPF data
+  React.useEffect(() => {
+    fetch("/api/oe/current").then(r => r.json()).then(d => {
+      const m = {};
+      (d.dts || []).forEach(dt => { m[dt.dt_id] = dt; });
+      setOeData(m);
+    }).catch(() => {});
+    fetch("/api/oe/rpf").then(r => r.json()).then(d => {
+      const m = {};
+      (d.dts || []).forEach(dt => { m[dt.dt_id] = dt; });
+      setRpfData(m);
+    }).catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    if (!containerRef.current || typeof window.L === "undefined") return;
+    if (mapRef.current) { mapRef.current.remove(); mapRef.current = null; }
+
+    const L = window.L;
+    const map = L.map(containerRef.current, { center: [25.2692, 82.9975], zoom: 14 });
+    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { attribution: "© OSM", opacity: 0.55 }).addTo(map);
+
+    // Substation marker
+    L.marker([25.2692, 82.9975], {
+      icon: L.divIcon({ html: `<div style="background:#F59E0B;width:16px;height:16px;border-radius:2px;border:2px solid #fff;transform:rotate(45deg)"></div>`, iconSize:[16,16], iconAnchor:[8,8], className:"" })
+    }).addTo(map).bindPopup("<b>SS-BHU-001</b><br>33/11 kV BHU Substation<br>Lanka Feeder LK1");
+
+    const dtPoints = [];
+
+    // DT markers — color by OE status when OE layer active
+    if (layers.dts) {
+      (dts || []).forEach(dt => {
+        if (!dt.lat || !dt.lng) return;
+        dtPoints.push([dt.lat, dt.lng]);
+        const kva = dt.rated_kva || 100;
+        const r = Math.max(8, Math.min(18, kva / 16));
+        const oe = oeData[dt.dt_id];
+        const rpf = rpfData[dt.dt_id];
+
+        let fillColor, label;
+        if (layers.oe && oe) {
+          const st = oe.oe_status;
+          fillColor = st === "RPF" ? "#EF4444" : st === "EXCEEDING" ? "#F97316" : st === "WARNING" ? "#F59E0B" : "#10B981";
+          label = `OE: ${st}`;
+        } else {
+          const vAvg = ((dt.voltage_l1||230)+(dt.voltage_l2||230)+(dt.voltage_l3||230))/3;
+          fillColor = vAvg > 244 || vAvg < 216 ? "#EF4444" : vAvg > 240 || vAvg < 220 ? "#F59E0B" : "#10B981";
+          label = `V: ${vAvg.toFixed(0)} V`;
+        }
+
+        const loading = dt.current_loading_pct || 0;
+        const circle = L.circleMarker([dt.lat, dt.lng], {
+          radius: r, fillColor, color: "#fff", weight: 1.5, fillOpacity: 0.85,
+        }).addTo(map);
+
+        // RPF outer ring
+        if (layers.rpf && rpf && rpf.rpf) {
+          L.circleMarker([dt.lat, dt.lng], {
+            radius: r + 5, fillColor: "transparent", color: "#EF4444",
+            weight: 2.5, opacity: 0.8, dashArray: "4 3",
+          }).addTo(map);
+        }
+
+        const oeHtml = oe ? `<br>OE Status: <b style="color:${fillColor}">${oe.oe_status}</b><br>RPF: ${oe.rpf ? "⚠️ YES" : "No"} | Load: ${oe.consumer_load_kw?.toFixed(0)||"?"}kW` : "";
+        circle.bindPopup(
+          `<b>${dt.name || dt.dt_id}</b><br>` +
+          `Feeder: ${dt.feeder_id} | ${kva}kVA<br>` +
+          `Loading: ${loading.toFixed(1)}% | ${label}${oeHtml}`
+        );
+        if (onDTClick) circle.on("click", () => onDTClick(dt.dt_id));
+      });
+    }
+
+    // Feeder polyline
+    if (dtPoints.length > 0) {
+      L.polyline([[25.2692, 82.9975], ...dtPoints], { color: "#06B6D4", weight: 2.5, opacity: 0.75, dashArray: "6 3" }).addTo(map);
+    }
+
+    // DER markers
+    if (layers.ders) {
+      (ders || []).forEach(der => {
+        if (!der.lat || !der.lng) return;
+        const c = der.status === "Online" ? "#10B981" : der.status === "Curtailed" ? "#8B5CF6" : "#EF4444";
+        L.marker([der.lat, der.lng], {
+          icon: L.divIcon({ html: `<div style="background:${c};width:10px;height:10px;border-radius:50%;border:2px solid rgba(255,255,255,0.8);box-shadow:0 0 6px ${c}"></div>`, iconSize:[10,10], iconAnchor:[5,5], className:"" })
+        }).addTo(map).bindPopup(`<b>${der.der_id}</b><br>${der.der_type} · ${der.nameplate_kw}kW<br>${der.location_name}<br>Now: <b>${(der.current_kw||0).toFixed(1)} kW</b>`);
+      });
+    }
+
+    mapRef.current = map;
+    return () => { if (mapRef.current) { mapRef.current.remove(); mapRef.current = null; } };
+  }, [ders, dts, layers, oeData, rpfData]);
+
+  const btnStyle = (active) => ({
+    padding: "3px 9px", borderRadius: 4, fontSize: 11, cursor: "pointer", border: "none",
+    background: active ? "var(--accent)" : "rgba(255,255,255,0.08)", color: active ? "#fff" : "var(--text-muted)",
+    fontWeight: active ? 600 : 400,
   });
 
-  // Feeder colors
-  const fColors = { "FDR-01": "#06B6D4", "FDR-02": "#8B5CF6", "FDR-03": "#F59E0B" };
+  return (
+    <div style={{ position: "relative" }}>
+      <div style={{ display: "flex", gap: 4, padding: "4px 6px", background: "rgba(0,0,0,0.5)", borderRadius: "6px 6px 0 0", flexWrap: "wrap" }}>
+        <span style={{ fontSize: 10, color: "var(--text-muted)", alignSelf: "center", marginRight: 4 }}>Layers:</span>
+        {[["dts","DTs"],["ders","DERs"],["oe","OE Heat"],["rpf","RPF"],["alerts","Alerts"]].map(([k,lbl]) => (
+          <button key={k} style={btnStyle(layers[k])} onClick={() => setLayers(p => ({...p,[k]:!p[k]}))}>
+            {lbl}
+          </button>
+        ))}
+        <span style={{ marginLeft: "auto", fontSize: 10, color: "var(--text-muted)", alignSelf: "center" }}>
+          🟢 Normal &nbsp;🟡 Warning &nbsp;🔴 RPF/Violation &nbsp;⭕ RPF ring
+        </span>
+      </div>
+      <div className="leaflet-map-wrap" style={{ height, position: "relative" }}>
+        <div ref={containerRef} style={{ height: "100%", width: "100%" }} />
+      </div>
+    </div>
+  );
+}
+
+function GISMap({ ders, dts, feeders, onDTClick }) {
+  return <LeafletMap ders={ders} dts={dts} height={280} onDTClick={onDTClick} />;
+}
+
+// ─── DT Drill-Down Modal ──────────────────────────────────────────────────────
+
+function DTDrilldownModal({ dtId, onClose }) {
+  const [data, setData] = React.useState(null);
+  React.useEffect(() => {
+    if (!dtId) return;
+    fetch(`/api/dashboard/dt/${dtId}`).then(r => r.json()).then(setData).catch(() => {});
+  }, [dtId]);
+
+  if (!dtId) return null;
+  const overlay = { position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", zIndex: 9999, display: "flex", alignItems: "center", justifyContent: "center" };
+  const modal = { background: "var(--card-bg)", border: "1px solid var(--border)", borderRadius: 10, padding: 24, width: "min(90vw, 780px)", maxHeight: "85vh", overflowY: "auto" };
 
   return (
-    <div className="map-placeholder" style={{ height: "100%", minHeight: 280 }}>
-      <div className="map-grid"></div>
-      {/* DT markers */}
-      {(dts || []).map(dt => {
-        const pos = project(dt.lat, dt.lng);
-        const loading = dt.current_loading_pct || dt.loading_pct || 0;
-        const color = loading > 80 ? "#EF4444" : loading > 60 ? "#F59E0B" : "#60A5FA";
-        return (
-          <div key={dt.dt_id}
-            style={{ position: "absolute", left: `${pos.x}%`, top: `${pos.y}%`, transform: "translate(-50%,-50%)" }}
-            onMouseEnter={() => setTooltip({ ...dt, type: "dt", x: pos.x, y: pos.y })}
-            onMouseLeave={() => setTooltip(null)}>
-            <div style={{ width: 14, height: 14, background: color, borderRadius: 3, border: "1px solid rgba(255,255,255,0.3)", cursor: "pointer" }}></div>
-          </div>
-        );
-      })}
-      {/* DER markers */}
-      {(ders || []).map((der, i) => {
-        const pos = project(der.lat, der.lng);
-        const statusClass = der.status === "Online" ? "online" : der.status === "Curtailed" ? "curtailed" : "offline";
-        return (
-          <div key={der.der_id}
-            className={`der-marker ${statusClass}`}
-            style={{ left: `${pos.x}%`, top: `${pos.y}%` }}
-            onMouseEnter={() => setTooltip({ ...der, type: "der", x: pos.x, y: pos.y })}
-            onMouseLeave={() => setTooltip(null)}>
-          </div>
-        );
-      })}
-      {/* Tooltip */}
-      {tooltip && (
-        <div style={{ position: "absolute", left: `${Math.min(80, tooltip.x + 2)}%`, top: `${Math.max(5, tooltip.y - 10)}%`,
-          background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: 6, padding: "8px 10px", fontSize: 11, zIndex: 10, pointerEvents: "none", maxWidth: 180 }}>
-          {tooltip.type === "der" ? (
-            <>
-              <div style={{ fontWeight: 600, marginBottom: 4 }}>{tooltip.der_id}</div>
-              <div>{tooltip.der_type} · {tooltip.nameplate_kw}kW</div>
-              <div>{tooltip.location_name}</div>
-              <div style={{ color: "var(--text-muted)" }}>Now: {(tooltip.current_kw || 0).toFixed(1)} kW</div>
-              <Badge status={tooltip.status} />
-            </>
-          ) : (
-            <>
-              <div style={{ fontWeight: 600, marginBottom: 4 }}>{tooltip.name}</div>
-              <div>Loading: {(tooltip.current_loading_pct || tooltip.loading_pct || 0).toFixed(1)}%</div>
-              <div>V-L1: {(tooltip.voltage_l1 || 230).toFixed(1)}V</div>
-            </>
-          )}
-        </div>
-      )}
-      {/* Legend */}
-      <div style={{ position: "absolute", bottom: 8, left: 8, background: "rgba(11,17,33,0.85)", border: "1px solid var(--border)", borderRadius: 6, padding: "6px 10px", fontSize: 10 }}>
-        <div>● Online DER &nbsp; ■ DT (green/amber/red by loading)</div>
-        <div style={{ color: "var(--text-muted)" }}>FDR-01: Sigra-Lanka · FDR-02: Bhelupur · FDR-03: Sarnath</div>
+    <div style={overlay} onClick={onClose}>
+      <div style={modal} onClick={e => e.stopPropagation()}>
+        {!data ? <div style={{ color: "var(--text-muted)", textAlign: "center", padding: 40 }}>Loading…</div> : (
+          <>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+              <h3 style={{ margin: 0, color: "var(--accent)" }}>{data.dt?.name || dtId} — DT Drill-Down</h3>
+              <button onClick={onClose} style={{ background: "none", border: "none", color: "var(--text-muted)", fontSize: 20, cursor: "pointer" }}>✕</button>
+            </div>
+
+            {/* KPI row */}
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 10, marginBottom: 16 }}>
+              {[
+                ["Rated kVA", data.rated_kva + " kVA"],
+                ["Consumers", data.consumer_count],
+                ["DERs on DT", data.der_count],
+                ["DT Loading", (data.loadflow?.loading_pct?.toFixed(1) ?? "—") + "%"],
+              ].map(([l,v]) => (
+                <div key={l} style={{ background: "rgba(255,255,255,0.04)", borderRadius: 6, padding: "8px 12px" }}>
+                  <div style={{ fontSize: 10, color: "var(--text-muted)" }}>{l}</div>
+                  <div style={{ fontSize: 16, fontWeight: 700, color: "var(--text)" }}>{v}</div>
+                </div>
+              ))}
+            </div>
+
+            {/* Load Flow */}
+            {data.loadflow?.voltage && (
+              <div style={{ background: "rgba(255,255,255,0.04)", borderRadius: 6, padding: 12, marginBottom: 12 }}>
+                <div style={{ fontSize: 11, color: "var(--accent)", marginBottom: 6, fontWeight: 600 }}>pandapower Load Flow</div>
+                <div style={{ display: "flex", gap: 20, fontSize: 12 }}>
+                  <span>Voltage: <b style={{ color: data.loadflow.voltage.violation ? "#EF4444" : "#10B981" }}>{data.loadflow.voltage.vm_pu?.toFixed(4)} pu ({data.loadflow.voltage.vm_v?.toFixed(0)} V)</b></span>
+                  <span>Loading: <b>{data.loadflow.loading_pct?.toFixed(1)}%</b></span>
+                  <span>Status: <b style={{ color: data.loadflow.voltage.status === "normal" ? "#10B981" : "#F59E0B" }}>{data.loadflow.voltage.status}</b></span>
+                </div>
+              </div>
+            )}
+
+            {/* OE summary */}
+            {data.oe && (
+              <div style={{ background: "rgba(255,255,255,0.04)", borderRadius: 6, padding: 12, marginBottom: 12 }}>
+                <div style={{ fontSize: 11, color: "var(--accent)", marginBottom: 6, fontWeight: 600 }}>Operating Envelope (OE)</div>
+                <div style={{ display: "flex", gap: 20, fontSize: 12, flexWrap: "wrap" }}>
+                  <span>Status: <b style={{ color: data.oe.oe_status === "NORMAL" ? "#10B981" : "#EF4444" }}>{data.oe.oe_status}</b></span>
+                  <span>Consumer Load: <b>{data.oe.consumer_load_kw} kW</b></span>
+                  <span>DER Gen: <b>{data.oe.total_der_gen_kw} kW</b></span>
+                  <span>RPF: <b style={{ color: data.oe.rpf ? "#EF4444" : "#10B981" }}>{data.oe.rpf ? `YES (${data.oe.export_kw} kW export)` : "No"}</b></span>
+                </div>
+              </div>
+            )}
+
+            {/* Hosting Capacity */}
+            <div style={{ background: "rgba(255,255,255,0.04)", borderRadius: 6, padding: 12, marginBottom: 12 }}>
+              <div style={{ fontSize: 11, color: "var(--accent)", marginBottom: 6, fontWeight: 600 }}>Hosting Capacity</div>
+              <div style={{ display: "flex", gap: 20, fontSize: 12 }}>
+                <span>HC: <b>{data.hosting_capacity?.hc_kw} kW</b></span>
+                <span>Used: <b>{data.hosting_capacity?.used_kw} kW ({data.hosting_capacity?.used_pct}%)</b></span>
+                <span>Status: <b style={{ color: data.hosting_capacity?.traffic_light === "green" ? "#10B981" : data.hosting_capacity?.traffic_light === "amber" ? "#F59E0B" : "#EF4444" }}>{data.hosting_capacity?.traffic_light?.toUpperCase()}</b></span>
+              </div>
+            </div>
+
+            {/* DERs table */}
+            <div style={{ fontSize: 11, color: "var(--accent)", fontWeight: 600, marginBottom: 6 }}>DERs on this DT</div>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+              <thead>
+                <tr style={{ color: "var(--text-muted)" }}>
+                  {["DER ID","Nameplate","Now (kW)","DOC","OE","Status"].map(h => (
+                    <th key={h} style={{ padding: "4px 8px", textAlign: "left", borderBottom: "1px solid var(--border)", fontWeight: 500 }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {(data.ders || []).map(d => {
+                  const doc = data.loadflow?.doc?.find(x => x.der_id === d.der_id);
+                  const oeD = data.oe?.ders?.find(x => x.der_id === d.der_id);
+                  return (
+                    <tr key={d.der_id} style={{ borderBottom: "1px solid rgba(255,255,255,0.05)" }}>
+                      <td style={{ padding: "5px 8px", fontFamily: "monospace" }}>{d.der_id}</td>
+                      <td style={{ padding: "5px 8px" }}>{d.nameplate_kw} kW</td>
+                      <td style={{ padding: "5px 8px" }}>{(d.current_kw||0).toFixed(1)}</td>
+                      <td style={{ padding: "5px 8px" }}>{doc ? `${doc.doc_kw} kW (${doc.doc_pct}%)` : "—"}</td>
+                      <td style={{ padding: "5px 8px", color: oeD?.exceeding ? "#EF4444" : "#10B981" }}>{oeD ? `${oeD.oe_kw} kW` : "—"}</td>
+                      <td style={{ padding: "5px 8px", color: d.status === "Online" ? "#10B981" : "#EF4444" }}>{d.status}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+
+            {/* OE 24h chart */}
+            {data.oe_chart_24h && data.oe_chart_24h.length > 0 && (
+              <div style={{ marginTop: 16 }}>
+                <div style={{ fontSize: 11, color: "var(--accent)", fontWeight: 600, marginBottom: 6 }}>Today's OE Schedule vs Forecast (24 slots)</div>
+                <SvgLineChart
+                  data={data.oe_chart_24h.map(b => ({ ...b, label: b.time }))}
+                  lines={[
+                    { key: "oe_kw", label: "OE Limit", color: "#10B981", dash: "5 3" },
+                    { key: "forecast_kw", label: "Forecast Gen", color: "#FCD34D" },
+                    { key: "consumer_load_kw", label: "Consumer Load", color: "#60A5FA", dash: "3 3" },
+                  ]}
+                  height={160}
+                />
+              </div>
+            )}
+          </>
+        )}
       </div>
     </div>
   );
@@ -365,6 +550,13 @@ function GISMap({ ders, dts, feeders }) {
 // ─── Dashboard Screen ─────────────────────────────────────────────────────────
 
 function DashboardScreen({ summary, genProfile, ders }) {
+  const [dtDrilldown, setDtDrilldown] = React.useState(null);
+  const [oeSummary, setOeSummary] = React.useState(null);
+
+  React.useEffect(() => {
+    fetch("/api/oe/summary").then(r => r.json()).then(setOeSummary).catch(() => {});
+  }, []);
+
   if (!summary) return <div className="loading">Loading dashboard...</div>;
   const { total_ders, online_ders, offline_ders, curtailed_ders, total_generation_kw,
     total_capacity_kw, system_cuf_pct, active_alerts, feeders, recent_alerts,
@@ -374,18 +566,30 @@ function DashboardScreen({ summary, genProfile, ders }) {
 
   return (
     <div>
+      {dtDrilldown && <DTDrilldownModal dtId={dtDrilldown} onClose={() => setDtDrilldown(null)} />}
+
       <div className="kpi-grid">
         <KpiCard label="Total Generation" value={(total_generation_kw || 0).toFixed(1)} unit="kW" sub={`of ${(total_capacity_kw || 0).toFixed(0)} kW installed`} color="var(--solar)" icon="☀️" />
         <KpiCard label="DERs Online" value={online_ders || 0} sub={`${offline_ders || 0} offline · ${curtailed_ders || 0} curtailed`} color="var(--success)" icon="⚡" />
         <KpiCard label="System CUF" value={cuf_display.toFixed(1)} unit="%" sub="Capacity Utilization Factor" color="var(--cyan)" icon="📊" />
-        <KpiCard label="IEEE 2030.5 Agg." value={ieee_aggregators_online || 0} sub="DER aggregators connected" color="var(--purple)" icon="🔌" />
-        <KpiCard label="Active Alerts" value={active_alerts || 0} sub={`${active_der_controls || 0} DERControls active`} color={(active_alerts || 0) > 0 ? "var(--danger)" : "var(--success)"} icon="🔔" />
+        <KpiCard label="Active Alerts" value={active_alerts || 0} sub={`click Alerts tab for details`} color={(active_alerts || 0) > 0 ? "var(--danger)" : "var(--success)"} icon="🔔" />
+        {oeSummary && <KpiCard label="RPF Events" value={oeSummary.rpf_dts || 0} sub={`${oeSummary.ders_exceeding_oe || 0} DERs exceeding OE`} color={oeSummary.rpf_dts > 0 ? "var(--danger)" : "var(--success)"} icon="↩️" />}
       </div>
 
+      {/* OE status banner if issues */}
+      {oeSummary && (oeSummary.rpf_dts > 0 || oeSummary.ders_exceeding_oe > 0) && (
+        <div style={{ background: "rgba(239,68,68,0.12)", border: "1px solid rgba(239,68,68,0.35)", borderRadius: 8, padding: "10px 16px", marginBottom: 12, fontSize: 13, color: "#FCA5A5", display: "flex", gap: 16, flexWrap: "wrap" }}>
+          <span>⚠️ <b>Grid Conditions:</b></span>
+          {oeSummary.rpf_dts > 0 && <span>🔴 RPF detected on <b>{oeSummary.rpf_dts} DT(s)</b></span>}
+          {oeSummary.ders_exceeding_oe > 0 && <span>🟠 <b>{oeSummary.ders_exceeding_oe} DER(s)</b> exceeding OE limit</span>}
+          <span style={{ marginLeft: "auto", color: "var(--text-muted)", fontSize: 11 }}>Click DT on map for drill-down · See OE Monitor screen for details</span>
+        </div>
+      )}
+
       <div className="row row-4" style={{ marginBottom: 16 }}>
-        <div className="card" style={{ minHeight: 300 }}>
-          <div className="card-title">🗺️ DER Fleet GIS View — Varanasi Pilot</div>
-          <GISMap ders={ders} dts={distribution_transformers} feeders={feeders} />
+        <div className="card" style={{ minHeight: 340 }}>
+          <div className="card-title">🗺️ DER Fleet GIS — Lanka Feeder LK1 <span style={{ fontSize: 10, color: "var(--text-muted)" }}>(click DT for drill-down)</span></div>
+          <LeafletMap ders={ders} dts={distribution_transformers} height={300} onDTClick={setDtDrilldown} />
         </div>
         <div className="card">
           <div className="card-title">🔔 Active Alerts</div>
@@ -491,7 +695,7 @@ function DERFleetScreen({ ders }) {
             </table>
           ) : (
             <div style={{ height: 400, padding: 8 }}>
-              <GISMap ders={filtered} dts={[]} feeders={[]} />
+              <LeafletMap ders={filtered} dts={[]} height={390} />
             </div>
           )}
         </div>
@@ -1618,6 +1822,16 @@ function DemandResponseScreen({ ders, summary }) {
   const [demandData, setDemandData] = useState(null);
   const [consumers, setConsumers] = useState(null);
   const [cba, setCba] = useState(null);
+  const [cblData, setCblData] = useState(null);
+  const [cblConsumer, setCblConsumer] = useState("");
+  const [cblLoading, setCblLoading] = useState(false);
+  const [inviteEventId, setInviteEventId] = useState("");
+  const [invitations, setInvitations] = useState(null);
+  const [inviting, setInviting] = useState(false);
+  const [responding, setResponding] = useState(null);
+  const [mvsEventId, setMvsEventId] = useState("");
+  const [mvsData, setMvsData] = useState(null);
+  const [mvsLoading, setMvsLoading] = useState(false);
 
   useEffect(() => {
     const load = () => {
@@ -1672,8 +1886,14 @@ function DemandResponseScreen({ ders, summary }) {
     ["dispatch",  "⚡ Dispatch"],
     ["consumers", "👥 Consumer Enrollment"],
     ["cba",       "💰 Cost-Benefit"],
+    ["cbl",       "📉 CBL Engine"],
+    ["invitations","📨 Invitations"],
+    ["mvs",       "✅ MV&S"],
+    ["live_monitor","🔴 Live Monitor"],
+    ["sldc",      "📅 SLDC Schedule"],
+    ["lifecycle", "🔄 Lifecycle"],
     ["history",   "📋 Event History"],
-    ["program",   "📜 DR Programs"],
+    ["programme", "📜 DR Programme"],
   ];
 
   return (
@@ -1993,6 +2213,341 @@ function DemandResponseScreen({ ders, summary }) {
         </div>
       )}
 
+      {/* ── CBL Engine Tab ── */}
+      {activeTab === "cbl" && (
+        <div>
+          <div className="row row-2">
+            <div className="card">
+              <div className="card-title">📉 10-of-10 CBL Engine</div>
+              <div style={{ fontSize: 12, color: "var(--text-muted)", marginBottom: 12 }}>
+                Calculates baseline load from 10 most recent comparable (same weekday type) non-event days.
+                AEIC/DSMIG standard used in India's pilot DR programs.
+              </div>
+              <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+                <select value={cblConsumer} onChange={e => setCblConsumer(e.target.value)}
+                  style={{ flex: 1, background: "var(--bg)", border: "1px solid var(--border)", color: "var(--text)", padding: "6px 8px", borderRadius: 4, fontSize: 12 }}>
+                  <option value="">All enrolled consumers</option>
+                  {(consumers?.consumers || []).filter(c => c.enrolled).map(c => (
+                    <option key={c.consumer_no} value={c.consumer_no}>{c.name} ({c.consumer_no})</option>
+                  ))}
+                </select>
+                <button onClick={async () => {
+                  setCblLoading(true);
+                  const url = cblConsumer
+                    ? `/api/dr/cbl?consumer_no=${cblConsumer}&event_start_hour=17&event_duration_h=2`
+                    : `/api/dr/cbl?event_start_hour=17&event_duration_h=2`;
+                  const d = await apiFetch(url);
+                  setCblData(d);
+                  setCblLoading(false);
+                }} style={{ background: "var(--secondary)", color: "#fff", border: "none", padding: "6px 14px", borderRadius: 4, cursor: "pointer", fontWeight: 600, fontSize: 12, whiteSpace: "nowrap" }}>
+                  {cblLoading ? "Computing…" : "Run CBL"}
+                </button>
+              </div>
+              {cblData && (
+                <div>
+                  {cblData.profiles ? (
+                    <div style={{ marginBottom: 10, fontSize: 12 }}>
+                      <div style={{ fontWeight: 600 }}>Aggregate CBL: <span style={{ color: "var(--solar)" }}>{cblData.aggregate_cbl_kw} kW</span> ({cblData.aggregate_cbl_kwh} kWh)</div>
+                      <div style={{ color: "var(--text-muted)" }}>Event window: 17:00–19:00 | {cblData.enrolled_consumers} consumers</div>
+                    </div>
+                  ) : (
+                    <div style={{ marginBottom: 10, fontSize: 12 }}>
+                      <div style={{ fontWeight: 600 }}>{cblData.name} — CBL: <span style={{ color: "var(--solar)" }}>{cblData.total_cbl_kwh} kWh</span></div>
+                      <div style={{ color: "var(--text-muted)" }}>Method: {cblData.method} | {cblData.comparable_days_used} comparable days</div>
+                    </div>
+                  )}
+                  <table>
+                    <thead><tr><th>Time Slot</th><th>CBL (kW)</th><th>Min (kW)</th><th>Max (kW)</th><th>Spread</th></tr></thead>
+                    <tbody>
+                      {(cblData.cbl_slots || (cblData.profiles && cblData.profiles[0]?.cbl_slots) || []).map((s, i) => (
+                        <tr key={i}>
+                          <td style={{ fontFamily: "monospace" }}>{s.slot}</td>
+                          <td style={{ fontWeight: 600, color: "var(--solar)" }}>{s.cbl_kw}</td>
+                          <td style={{ color: "var(--text-muted)" }}>{s.min_kw}</td>
+                          <td style={{ color: "var(--text-muted)" }}>{s.max_kw}</td>
+                          <td>
+                            <div style={{ width: 60, height: 6, background: "var(--bg)", borderRadius: 3 }}>
+                              <div style={{ width: `${Math.min(100, (s.cbl_kw - s.min_kw) / (s.max_kw - s.min_kw + 0.001) * 100)}%`, height: "100%", borderRadius: 3, background: "var(--solar)" }} />
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+              {!cblData && <div style={{ color: "var(--text-muted)", fontSize: 12, padding: "20px 0", textAlign: "center" }}>Select a consumer and click Run CBL</div>}
+            </div>
+            <div className="card">
+              <div className="card-title">📚 CBL Methodology</div>
+              <div style={{ fontSize: 12, display: "flex", flexDirection: "column", gap: 10 }}>
+                {[
+                  { step: "1. Select comparable days", desc: "10 most recent days with same weekday type (weekday/weekend) — exclude previous event days" },
+                  { step: "2. Fetch 15-min interval data", desc: "MDMS / AMISP API for each comparable day (In pilot: simulated from monthly kWh + MDI)" },
+                  { step: "3. Average per slot", desc: "For each 15-min slot in the event window, average kW across all 10 days" },
+                  { step: "4. Apply symmetry adjustment", desc: "± correction if day-of loads differ from 10-day average (optional per UPERC guidelines)" },
+                  { step: "5. Output", desc: "CBL profile (kW per slot) and total CBL kWh for the event window" },
+                ].map((s, i) => (
+                  <div key={i} style={{ background: "var(--bg)", borderRadius: 6, padding: "8px 12px" }}>
+                    <div style={{ fontWeight: 600, color: "var(--cyan)" }}>{s.step}</div>
+                    <div style={{ color: "var(--text-muted)", marginTop: 2 }}>{s.desc}</div>
+                  </div>
+                ))}
+                <div style={{ background: "rgba(16,185,129,0.1)", borderRadius: 6, padding: "8px 12px", border: "1px solid rgba(16,185,129,0.3)" }}>
+                  <div style={{ fontWeight: 600, color: "var(--success)" }}>PRD Reference</div>
+                  <div style={{ color: "var(--text-muted)", marginTop: 2 }}>Module 15 — CBL Engine (10-of-10 method as per AEIC/DSMIG standard)</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Event Invitations Tab ── */}
+      {activeTab === "invitations" && (
+        <div>
+          <div className="row row-2">
+            <div className="card">
+              <div className="card-title">📨 Send DR Event Invitations</div>
+              <div style={{ fontSize: 12, color: "var(--text-muted)", marginBottom: 12 }}>
+                Invite enrolled consumers to accept or decline a DR event before dispatch.
+              </div>
+              <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+                <select value={inviteEventId} onChange={e => setInviteEventId(e.target.value)}
+                  style={{ flex: 1, background: "var(--bg)", border: "1px solid var(--border)", color: "var(--text)", padding: "6px 8px", borderRadius: 4, fontSize: 12 }}>
+                  <option value="">Select event…</option>
+                  {[...drEvents.map(e => e.event_id), "DR-202603011430","DR-202602281100"].filter(Boolean).map(eid => (
+                    <option key={eid} value={eid}>{eid}</option>
+                  ))}
+                </select>
+                <button onClick={async () => {
+                  if (!inviteEventId) return;
+                  setInviting(true);
+                  await fetch(`/api/dr/events/${inviteEventId}/invite`, { method: "POST" });
+                  const d = await apiFetch(`/api/dr/events/${inviteEventId}/invitations`);
+                  setInvitations(d);
+                  setInviting(false);
+                }} style={{ background: "var(--secondary)", color: "#fff", border: "none", padding: "6px 14px", borderRadius: 4, cursor: "pointer", fontWeight: 600, fontSize: 12, whiteSpace: "nowrap" }}>
+                  {inviting ? "Sending…" : "Send Invites"}
+                </button>
+                {inviteEventId && (
+                  <button onClick={async () => {
+                    const d = await apiFetch(`/api/dr/events/${inviteEventId}/invitations`);
+                    setInvitations(d);
+                  }} style={{ background: "transparent", border: "1px solid var(--border)", color: "var(--text-muted)", padding: "6px 12px", borderRadius: 4, cursor: "pointer", fontSize: 12 }}>
+                    Refresh
+                  </button>
+                )}
+              </div>
+
+              {invitations && (
+                <div>
+                  <div style={{ display: "flex", gap: 10, marginBottom: 10 }}>
+                    {[
+                      { label: "Invited", value: invitations.total_invited, color: "var(--text)" },
+                      { label: "Accepted", value: invitations.accepted, color: "var(--success)" },
+                      { label: "Declined", value: invitations.declined, color: "var(--danger)" },
+                      { label: "Pending", value: invitations.pending, color: "var(--warning)" },
+                      { label: "Committed kW", value: `${invitations.committed_kw} kW`, color: "var(--cyan)" },
+                    ].map(({ label, value, color }) => (
+                      <div key={label} style={{ flex: 1, background: "var(--bg)", borderRadius: 6, padding: "8px", textAlign: "center" }}>
+                        <div style={{ fontSize: 10, color: "var(--text-muted)" }}>{label}</div>
+                        <div style={{ fontWeight: 700, color, fontSize: 14 }}>{value}</div>
+                      </div>
+                    ))}
+                  </div>
+                  <table>
+                    <thead><tr><th>Consumer</th><th>Name</th><th>Avg Demand</th><th>Status</th><th>Time</th><th>Respond</th></tr></thead>
+                    <tbody>
+                      {invitations.invitations.map(inv => (
+                        <tr key={inv.consumer_no}>
+                          <td style={{ fontFamily: "monospace", fontSize: 10 }}>{inv.consumer_no}</td>
+                          <td style={{ fontSize: 11 }}>{inv.name}</td>
+                          <td>{inv.avg_demand_kw} kW</td>
+                          <td>
+                            <span style={{ fontWeight: 600, fontSize: 11, color: inv.status === "ACCEPTED" ? "var(--success)" : inv.status === "DECLINED" ? "var(--danger)" : "var(--warning)" }}>
+                              {inv.status}
+                            </span>
+                          </td>
+                          <td style={{ fontSize: 10, color: "var(--text-muted)" }}>{inv.ts ? new Date(inv.ts).toLocaleTimeString() : "—"}</td>
+                          <td style={{ whiteSpace: "nowrap" }}>
+                            {inv.status === "INVITED" && (
+                              <>
+                                <button onClick={async () => {
+                                  setResponding(inv.consumer_no);
+                                  await fetch(`/api/dr/events/${inviteEventId}/respond`, {
+                                    method: "POST", headers: { "Content-Type": "application/json" },
+                                    body: JSON.stringify({ consumer_no: inv.consumer_no, response: "ACCEPTED" }),
+                                  });
+                                  const d = await apiFetch(`/api/dr/events/${inviteEventId}/invitations`);
+                                  setInvitations(d);
+                                  setResponding(null);
+                                }} disabled={responding === inv.consumer_no}
+                                  style={{ background: "rgba(16,185,129,0.15)", border: "1px solid var(--success)", color: "var(--success)", padding: "2px 7px", borderRadius: 4, cursor: "pointer", fontSize: 10, marginRight: 4 }}>
+                                  Accept
+                                </button>
+                                <button onClick={async () => {
+                                  setResponding(inv.consumer_no);
+                                  await fetch(`/api/dr/events/${inviteEventId}/respond`, {
+                                    method: "POST", headers: { "Content-Type": "application/json" },
+                                    body: JSON.stringify({ consumer_no: inv.consumer_no, response: "DECLINED", reason: "Operational constraints" }),
+                                  });
+                                  const d = await apiFetch(`/api/dr/events/${inviteEventId}/invitations`);
+                                  setInvitations(d);
+                                  setResponding(null);
+                                }} disabled={responding === inv.consumer_no}
+                                  style={{ background: "rgba(239,68,68,0.1)", border: "1px solid var(--danger)", color: "var(--danger)", padding: "2px 7px", borderRadius: 4, cursor: "pointer", fontSize: 10 }}>
+                                  Decline
+                                </button>
+                              </>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+              {!invitations && <div style={{ color: "var(--text-muted)", fontSize: 12, padding: "20px 0", textAlign: "center" }}>Select an event and click Send Invites</div>}
+            </div>
+
+            <div className="card">
+              <div className="card-title">📋 Invitation Workflow</div>
+              <div style={{ fontSize: 12, display: "flex", flexDirection: "column", gap: 10 }}>
+                {[
+                  { step: "DERMS → Consumer", desc: "DERMS sends DR event invitation (SMS / consumer portal) specifying: time window, expected reduction, incentive rate" },
+                  { step: "Consumer responds", desc: "Accept: consumer commits to the reduction. Decline: consumer opts out (no penalty for first 2 declines/year)" },
+                  { step: "DERMS confirms dispatch", desc: "Only ACCEPTED consumers receive DERControl signals. Declined consumers are excluded from this event." },
+                  { step: "MV&S settlement", desc: "Post-event: meter data verifies actual reduction. Settlement paid to accepted consumers." },
+                ].map((s, i) => (
+                  <div key={i} style={{ background: "var(--bg)", borderRadius: 6, padding: "8px 12px" }}>
+                    <div style={{ fontWeight: 600, color: "var(--cyan)" }}>{i+1}. {s.step}</div>
+                    <div style={{ color: "var(--text-muted)", marginTop: 2 }}>{s.desc}</div>
+                  </div>
+                ))}
+                <div style={{ background: "rgba(16,185,129,0.1)", borderRadius: 6, padding: "8px 12px", border: "1px solid rgba(16,185,129,0.3)" }}>
+                  <div style={{ fontWeight: 600, color: "var(--success)" }}>PRD Module 16 — Accept/Decline Portal</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── MV&S Settlement Tab ── */}
+      {activeTab === "mvs" && (
+        <div>
+          <div className="row row-2">
+            <div className="card">
+              <div className="card-title">✅ MV&S — Measurement, Verification & Settlement</div>
+              <div style={{ fontSize: 12, color: "var(--text-muted)", marginBottom: 12 }}>
+                Compares actual smart meter readings against CBL to compute verified reduction and settlement payment.
+              </div>
+              <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+                <select value={mvsEventId} onChange={e => setMvsEventId(e.target.value)}
+                  style={{ flex: 1, background: "var(--bg)", border: "1px solid var(--border)", color: "var(--text)", padding: "6px 8px", borderRadius: 4, fontSize: 12 }}>
+                  <option value="">Select event to settle…</option>
+                  {[...drEvents.map(e => e.event_id), "DR-202603011430","DR-202602281100"].filter(Boolean).map(eid => (
+                    <option key={eid} value={eid}>{eid}</option>
+                  ))}
+                </select>
+                <button onClick={async () => {
+                  if (!mvsEventId) return;
+                  setMvsLoading(true);
+                  const d = await apiFetch(`/api/dr/events/${mvsEventId}/settle`);
+                  if (!d) {
+                    // Try POST
+                    const r = await fetch(`/api/dr/events/${mvsEventId}/settle`, { method: "POST" });
+                    const s = await r.json();
+                    setMvsData(s);
+                  } else {
+                    setMvsData(d);
+                  }
+                  setMvsLoading(false);
+                }} style={{ background: "var(--secondary)", color: "#fff", border: "none", padding: "6px 14px", borderRadius: 4, cursor: "pointer", fontWeight: 600, fontSize: 12, whiteSpace: "nowrap" }}>
+                  {mvsLoading ? "Settling…" : "Run Settlement"}
+                </button>
+              </div>
+
+              {mvsData && (
+                <div>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 8, marginBottom: 12, fontSize: 12 }}>
+                    {[
+                      { label: "Consumers Settled", value: mvsData.consumers_settled, color: "var(--text)" },
+                      { label: "Verified Reduction", value: `${mvsData.total_verified_kwh} kWh`, color: "var(--solar)" },
+                      { label: "Incentives Paid", value: `₹${(mvsData.total_incentive_inr||0).toFixed(0)}`, color: "var(--warning)" },
+                      { label: "Cost Avoided", value: `₹${(mvsData.cost_avoided_inr||0).toFixed(0)}`, color: "var(--success)" },
+                      { label: "Net Utility Benefit", value: `₹${(mvsData.net_utility_benefit_inr||0).toFixed(0)}`, color: "var(--cyan)" },
+                      { label: "Settlement Rate", value: `₹${mvsData.settlement_rate_inr_kwh}/kWh`, color: "var(--text-muted)" },
+                    ].map(({ label, value, color }) => (
+                      <div key={label} style={{ background: "var(--bg)", borderRadius: 6, padding: "8px 10px" }}>
+                        <div style={{ fontSize: 10, color: "var(--text-muted)" }}>{label}</div>
+                        <div style={{ fontWeight: 700, color, fontSize: 13 }}>{value}</div>
+                      </div>
+                    ))}
+                  </div>
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Consumer</th><th>CBL (kWh)</th><th>Actual (kWh)</th>
+                        <th>Reduction</th><th>Incentive (₹)</th><th>Penalty (₹)</th><th>Net (₹)</th><th>Status</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {(mvsData.rows || []).map(r => (
+                        <tr key={r.consumer_no}>
+                          <td style={{ fontSize: 11 }}>{r.name}</td>
+                          <td style={{ color: "var(--text-muted)" }}>{r.cbl_kwh}</td>
+                          <td style={{ color: "var(--cyan)" }}>{r.actual_kwh}</td>
+                          <td style={{ fontWeight: 600, color: r.verified_reduction_kwh > 0 ? "var(--success)" : "var(--danger)" }}>
+                            {r.verified_reduction_kwh} kWh
+                          </td>
+                          <td style={{ color: "var(--warning)" }}>₹{r.incentive_inr}</td>
+                          <td style={{ color: r.penalty_inr > 0 ? "var(--danger)" : "var(--text-muted)" }}>
+                            {r.penalty_inr > 0 ? `₹${r.penalty_inr}` : "—"}
+                          </td>
+                          <td style={{ fontWeight: 600, color: r.net_payment_inr >= 0 ? "var(--success)" : "var(--danger)" }}>
+                            ₹{r.net_payment_inr}
+                          </td>
+                          <td>
+                            <span className={`badge ${r.settlement_status==="SETTLED"?"badge-online":"badge-critical"}`}>
+                              {r.settlement_status}
+                            </span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+              {!mvsData && <div style={{ color: "var(--text-muted)", fontSize: 12, padding: "20px 0", textAlign: "center" }}>Select a completed event and click Run Settlement</div>}
+            </div>
+
+            <div className="card">
+              <div className="card-title">📐 MV&S Methodology</div>
+              <div style={{ fontSize: 12, display: "flex", flexDirection: "column", gap: 10 }}>
+                {[
+                  { step: "1. Verified Reduction", desc: "Actual_kWh = smart meter reading during event. Reduction = CBL_kWh − Actual_kWh" },
+                  { step: "2. Incentive Calculation", desc: `Settlement Rate × Verified Reduction kWh = consumer incentive (₹4.50/kWh in pilot)` },
+                  { step: "3. Shortfall Penalty", desc: "If consumer accepted but delivered < committed reduction: penalty = shortfall × ₹2/kWh" },
+                  { step: "4. Net Payment", desc: "Net = Incentive − Penalty. Paid to consumer via PuVVNL billing adjustment (next bill)." },
+                  { step: "5. Utility Benefit", desc: "Cost Avoided (₹8.50/kWh peak rate × kWh saved) − Incentives Paid = Net Utility Benefit" },
+                ].map((s, i) => (
+                  <div key={i} style={{ background: "var(--bg)", borderRadius: 6, padding: "8px 12px" }}>
+                    <div style={{ fontWeight: 600, color: "var(--cyan)" }}>{s.step}</div>
+                    <div style={{ color: "var(--text-muted)", marginTop: 2 }}>{s.desc}</div>
+                  </div>
+                ))}
+                <div style={{ background: "rgba(16,185,129,0.1)", borderRadius: 6, padding: "8px 12px", border: "1px solid rgba(16,185,129,0.3)" }}>
+                  <div style={{ fontWeight: 600, color: "var(--success)" }}>PRD Module 17 — MV&S Engine</div>
+                  <div style={{ color: "var(--text-muted)", marginTop: 2 }}>Live MDMS API needed for production; simulated in pilot from monthly billing data</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ── Event History Tab ── */}
       {activeTab === "history" && (
         <div className="card">
@@ -2055,7 +2610,23 @@ function DemandResponseScreen({ ders, summary }) {
       )}
 
       {/* ── DR Programs Tab ── */}
-      {activeTab === "program" && (
+      {/* ── Live Event Monitor Tab (PRD Stage 7) ── */}
+      {activeTab === "live_monitor" && (
+        <LiveEventMonitorTab events={allEvents} />
+      )}
+
+      {/* ── SLDC Schedule Tab ── */}
+      {activeTab === "sldc" && (
+        <SLDCScheduleTab />
+      )}
+
+      {/* ── Lifecycle Tab ── */}
+      {activeTab === "lifecycle" && (
+        <LifecycleTab events={allEvents} />
+      )}
+
+      {/* renamed from program to programme */}
+      {activeTab === "programme" && (
         <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
           <div className="card">
             <div className="card-title">📜 PUVVNL DR Program Configuration</div>
@@ -2146,7 +2717,702 @@ function DemandResponseScreen({ ders, summary }) {
   );
 }
 
+// ─── DR Sub-Components ───────────────────────────────────────────────────────
+
+function LiveEventMonitorTab({ events }) {
+  const [selEvent, setSelEvent] = React.useState("");
+  const [monData, setMonData] = React.useState(null);
+  const [loading, setLoading] = React.useState(false);
+
+  const activeEvents = (events || []).filter(e => ["Active","ACTIVE","Approved","APPROVED"].includes(e.status));
+
+  const poll = (id) => {
+    if (!id) return;
+    setLoading(true);
+    fetch(`/api/dr/events/${id}/monitor`).then(r=>r.json()).then(d => { setMonData(d); setLoading(false); }).catch(()=>setLoading(false));
+  };
+
+  React.useEffect(() => {
+    if (!selEvent) return;
+    poll(selEvent);
+    const iv = setInterval(() => poll(selEvent), 15000);
+    return () => clearInterval(iv);
+  }, [selEvent]);
+
+  return (
+    <div>
+      <div style={{ display: "flex", gap: 10, alignItems: "center", marginBottom: 14 }}>
+        <select value={selEvent} onChange={e => { setSelEvent(e.target.value); setMonData(null); }}
+          style={{ padding: "6px 12px", background: "var(--secondary)", border: "1px solid var(--border)", color: "var(--text)", borderRadius: 6 }}>
+          <option value="">Select active event…</option>
+          {(events||[]).map(e => <option key={e.event_id} value={e.event_id}>{e.event_id} — {e.reason} ({e.status})</option>)}
+        </select>
+        {selEvent && <button onClick={() => poll(selEvent)} style={{ padding: "6px 14px", background: "var(--accent)", color: "#fff", border: "none", borderRadius: 6, cursor: "pointer" }}>⟳ Refresh</button>}
+        {selEvent && <span style={{ fontSize: 11, color: "var(--text-muted)" }}>Auto-refreshes every 15s</span>}
+      </div>
+      {loading && <div style={{ color: "var(--text-muted)", textAlign: "center", padding: 30 }}>Loading…</div>}
+      {monData && (
+        <div>
+          <div className="kpi-grid" style={{ marginBottom: 16 }}>
+            <KpiCard label="Total CBL" value={(monData.aggregate?.total_cbl_kw||0).toFixed(1)} unit="kW" sub="Baseline demand" color="var(--cyan)" icon="📊" />
+            <KpiCard label="Actual Demand" value={(monData.aggregate?.total_actual_kw||0).toFixed(1)} unit="kW" sub="Live metered" color="var(--solar)" icon="⚡" />
+            <KpiCard label="Curtailment" value={(monData.aggregate?.total_curtailed_kw||0).toFixed(1)} unit="kW" sub={`${(monData.aggregate?.curtailment_pct||0).toFixed(1)}% reduction`} color="var(--success)" icon="📉" />
+            <KpiCard label="On Track" value={monData.aggregate?.consumers_on_track||0} sub={`of ${monData.aggregate?.consumers_total||0} consumers`} color="var(--success)" icon="✅" />
+          </div>
+          {/* Curtailment gauge */}
+          <div style={{ background: "rgba(255,255,255,0.04)", borderRadius: 8, padding: 16, marginBottom: 16 }}>
+            <div style={{ fontSize: 12, color: "var(--text-muted)", marginBottom: 8 }}>Aggregate Curtailment Progress</div>
+            <div style={{ background: "rgba(255,255,255,0.08)", borderRadius: 4, height: 24, overflow: "hidden" }}>
+              <div style={{ width: `${Math.min(100, monData.aggregate?.curtailment_pct||0)}%`, height: "100%", background: monData.aggregate?.curtailment_pct >= 25 ? "#10B981" : "#F59E0B", borderRadius: 4, transition: "width 0.5s" }} />
+            </div>
+            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: "var(--text-muted)", marginTop: 4 }}>
+              <span>0%</span><span>Target: 25%+</span><span>100%</span>
+            </div>
+          </div>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+            <thead>
+              <tr style={{ color: "var(--text-muted)" }}>
+                {["Consumer","CBL kW","Actual kW","Curtailed kW","Reduction%","Committed","Status"].map(h => (
+                  <th key={h} style={{ padding: "6px 10px", textAlign: "left", borderBottom: "1px solid var(--border)", fontWeight: 500 }}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {(monData.consumers||[]).map(c => (
+                <tr key={c.consumer_no} style={{ borderBottom: "1px solid rgba(255,255,255,0.05)" }}>
+                  <td style={{ padding: "6px 10px" }}>{c.name}</td>
+                  <td style={{ padding: "6px 10px" }}>{c.current_cbl_kw}</td>
+                  <td style={{ padding: "6px 10px" }}>{c.current_actual_kw}</td>
+                  <td style={{ padding: "6px 10px", color: "#10B981", fontWeight: 600 }}>{c.curtailed_kw}</td>
+                  <td style={{ padding: "6px 10px" }}>{c.curtailment_pct}%</td>
+                  <td style={{ padding: "6px 10px" }}>{c.committed_kw} kW</td>
+                  <td style={{ padding: "6px 10px", color: c.on_track ? "#10B981" : "#F59E0B", fontWeight: 600 }}>{c.status}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 8 }}>
+            Event: {monData.event_id} | Elapsed: {monData.elapsed_min} min | Phase 1: settlement rate ₹0 (soft launch)
+          </div>
+        </div>
+      )}
+      {!selEvent && <div style={{ color: "var(--text-muted)", textAlign: "center", padding: 40, fontSize: 13 }}>Select an active event to monitor real-time curtailment (PRD Stage 7)</div>}
+    </div>
+  );
+}
+
+function SLDCScheduleTab() {
+  const [schedule, setSchedule] = React.useState(null);
+  const [loading, setLoading] = React.useState(false);
+
+  React.useEffect(() => {
+    fetch("/api/dr/sldc-schedule").then(r=>r.json()).then(setSchedule).catch(()=>{});
+  }, []);
+
+  const chartData = (schedule?.blocks||[]).map(b => ({
+    label: `${String(Math.floor((b.block_number-1)*0.5)).padStart(2,"0")}:${(b.block_number%2===0?"30":"00")}`,
+    demand: b.scheduled_demand_mw,
+    supply: b.available_supply_mw,
+    shortfall: b.shortfall_mw,
+  }));
+
+  const shortfallBlocks = (schedule?.blocks||[]).filter(b => b.shortfall_mw > 0);
+
+  return (
+    <div>
+      <div style={{ display: "flex", gap: 12, alignItems: "center", marginBottom: 16, flexWrap: "wrap" }}>
+        <h3 style={{ margin: 0 }}>SLDC Day-Ahead Schedule</h3>
+        <span style={{ fontSize: 11, color: "var(--text-muted)" }}>
+          {schedule?.source === "simulated (no upload yet)" ? "⚠️ Demo data (no upload yet)" : `Uploaded by ${schedule?.uploaded_by} at ${schedule?.uploaded_at ? new Date(schedule.uploaded_at).toLocaleTimeString() : "—"}`}
+        </span>
+        {shortfallBlocks.length > 0 && (
+          <span style={{ background: "rgba(239,68,68,0.15)", color: "#FCA5A5", borderRadius: 4, padding: "2px 8px", fontSize: 11 }}>
+            ⚠️ {shortfallBlocks.length} shortfall blocks — DR event may be needed
+          </span>
+        )}
+      </div>
+
+      {schedule && (
+        <>
+          <div className="kpi-grid" style={{ marginBottom: 14 }}>
+            <KpiCard label="Date" value={schedule.date||"—"} sub="Schedule date" color="var(--cyan)" icon="📅" />
+            <KpiCard label="Shortfall Blocks" value={shortfallBlocks.length} sub="Blocks with demand > supply" color={shortfallBlocks.length > 0 ? "var(--danger)" : "var(--success)"} icon="⚡" />
+            <KpiCard label="Total Shortfall" value={(shortfallBlocks.reduce((s,b)=>s+b.shortfall_mw*0.5,0)).toFixed(2)} unit="MWh" sub="Energy deficit" color={shortfallBlocks.length > 0 ? "var(--warning)" : "var(--success)"} icon="📉" />
+          </div>
+          <SvgLineChart
+            data={chartData}
+            lines={[
+              { key: "demand", label: "Scheduled Demand (MW)", color: "#60A5FA" },
+              { key: "supply", label: "Available Supply (MW)", color: "#10B981", dash: "5 3" },
+              { key: "shortfall", label: "Shortfall (MW)", color: "#EF4444", fill: "#EF4444" },
+            ]}
+            height={220}
+          />
+          <div style={{ marginTop: 10, fontSize: 11, color: "var(--text-muted)" }}>
+            In Phase 1 DR Manager uploads SLDC CSV manually (PRD §17.4). Phase 2: automated SFTP/API from UP SLDC.
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+function LifecycleTab({ events }) {
+  const [selEvent, setSelEvent] = React.useState("");
+  const [lc, setLc] = React.useState(null);
+  const [transStage, setTransStage] = React.useState("");
+  const [transNote, setTransNote] = React.useState("");
+  const [busy, setBusy] = React.useState(false);
+
+  const STAGES = ["DRAFT","APPROVED","NOTIFIED","COMMITTED","ACTIVE","PAUSED","COMPLETED","VERIFIED","SETTLED","ARCHIVED"];
+  const STAGE_COLOR = { DRAFT:"#6B7280",APPROVED:"#3B82F6",NOTIFIED:"#8B5CF6",COMMITTED:"#F59E0B",ACTIVE:"#10B981",PAUSED:"#F97316",COMPLETED:"#06B6D4",VERIFIED:"#10B981",SETTLED:"#22C55E",ARCHIVED:"#9CA3AF" };
+
+  const loadLc = (id) => {
+    if (!id) return;
+    fetch(`/api/dr/events/${id}/lifecycle`).then(r=>r.json()).then(setLc).catch(()=>{});
+  };
+  React.useEffect(() => { loadLc(selEvent); }, [selEvent]);
+
+  const advance = () => {
+    if (!transStage || !selEvent) return;
+    setBusy(true);
+    fetch(`/api/dr/events/${selEvent}/lifecycle`, {
+      method: "POST", headers: {"Content-Type":"application/json"},
+      body: JSON.stringify({ stage: transStage, user: "dr_manager", note: transNote }),
+    }).then(r=>r.json()).then(d => { setLc(d); setTransStage(""); setTransNote(""); setBusy(false); }).catch(()=>setBusy(false));
+  };
+
+  return (
+    <div>
+      <div style={{ display: "flex", gap: 10, alignItems: "center", marginBottom: 16 }}>
+        <select value={selEvent} onChange={e => { setSelEvent(e.target.value); setLc(null); }}
+          style={{ padding: "6px 12px", background: "var(--secondary)", border: "1px solid var(--border)", color: "var(--text)", borderRadius: 6 }}>
+          <option value="">Select event…</option>
+          {(events||[]).map(e => <option key={e.event_id} value={e.event_id}>{e.event_id} — {e.reason}</option>)}
+        </select>
+      </div>
+
+      {/* Stage pipeline */}
+      <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: 2, marginBottom: 20 }}>
+        {STAGES.map((s, i) => {
+          const isActive = lc?.stage === s;
+          const isPast = lc ? STAGES.indexOf(lc.stage) > i : false;
+          return (
+            <React.Fragment key={s}>
+              <div style={{ padding: "5px 12px", borderRadius: 4, fontSize: 11, fontWeight: isActive ? 700 : 400,
+                background: isActive ? STAGE_COLOR[s] : isPast ? "rgba(255,255,255,0.12)" : "rgba(255,255,255,0.04)",
+                color: isActive ? "#fff" : isPast ? "var(--text-muted)" : "rgba(255,255,255,0.3)",
+                border: isActive ? `1px solid ${STAGE_COLOR[s]}` : "1px solid rgba(255,255,255,0.1)",
+              }}>{s}</div>
+              {i < STAGES.length - 1 && <div style={{ color: "rgba(255,255,255,0.2)", fontSize: 12 }}>→</div>}
+            </React.Fragment>
+          );
+        })}
+      </div>
+
+      {lc && (
+        <div>
+          <div style={{ background: "rgba(255,255,255,0.04)", borderRadius: 8, padding: 14, marginBottom: 14 }}>
+            <div style={{ fontSize: 13, marginBottom: 4 }}>Current Stage: <b style={{ color: STAGE_COLOR[lc.stage] || "var(--accent)" }}>{lc.stage}</b></div>
+            <div style={{ fontSize: 12, color: "var(--text-muted)" }}>Allowed transitions: {(lc.allowed_transitions||[]).join(", ") || "None (terminal)"}</div>
+          </div>
+
+          {lc.allowed_transitions?.length > 0 && (
+            <div style={{ display: "flex", gap: 10, marginBottom: 14, flexWrap: "wrap", alignItems: "flex-end" }}>
+              <div>
+                <div style={{ fontSize: 11, color: "var(--text-muted)", marginBottom: 4 }}>Advance to</div>
+                <select value={transStage} onChange={e => setTransStage(e.target.value)}
+                  style={{ padding: "6px 12px", background: "var(--secondary)", border: "1px solid var(--border)", color: "var(--text)", borderRadius: 6 }}>
+                  <option value="">Select stage…</option>
+                  {lc.allowed_transitions.map(s => <option key={s} value={s}>{s}</option>)}
+                </select>
+              </div>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontSize: 11, color: "var(--text-muted)", marginBottom: 4 }}>Note (optional)</div>
+                <input value={transNote} onChange={e => setTransNote(e.target.value)} placeholder="Approval note…"
+                  style={{ padding: "6px 12px", background: "var(--secondary)", border: "1px solid var(--border)", color: "var(--text)", borderRadius: 6, width: "100%", boxSizing: "border-box" }} />
+              </div>
+              <button onClick={advance} disabled={busy || !transStage} style={{ padding: "8px 20px", background: "var(--accent)", color: "#fff", border: "none", borderRadius: 6, cursor: "pointer" }}>
+                {busy ? "…" : "Advance →"}
+              </button>
+            </div>
+          )}
+
+          <div style={{ fontSize: 12, color: "var(--accent)", fontWeight: 600, marginBottom: 8 }}>History</div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            {(lc.history||[]).map((h, i) => (
+              <div key={i} style={{ display: "flex", gap: 12, alignItems: "center", fontSize: 12, padding: "5px 0", borderBottom: "1px solid rgba(255,255,255,0.05)" }}>
+                <div style={{ width: 90, fontWeight: 600, color: STAGE_COLOR[h.stage] || "var(--text)" }}>{h.stage}</div>
+                <div style={{ color: "var(--text-muted)" }}>{h.ts ? new Date(h.ts).toLocaleString() : ""}</div>
+                <div style={{ color: "var(--text-muted)" }}>by {h.user}</div>
+                {h.note && <div style={{ color: "var(--text-secondary)", fontStyle: "italic" }}>{h.note}</div>}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+      {!selEvent && <div style={{ color: "var(--text-muted)", textAlign: "center", padding: 40 }}>Select an event to manage its 10-stage lifecycle</div>}
+    </div>
+  );
+}
+
+// ─── Alerts Screen (Module 7) ─────────────────────────────────────────────────
+
+function AlertsScreen() {
+  const [alerts, setAlerts] = useState([]);
+  const [filter, setFilter] = useState("ALL");  // ALL | OPEN | ACKNOWLEDGED | RESOLVED
+  const [priorityFilter, setPriorityFilter] = useState("ALL");
+  const [seeding, setSeeding] = useState(false);
+  const [acting, setActing] = useState(null);
+
+  const load = () => apiFetch("/api/dashboard/alerts?limit=100").then(d => {
+    if (d) setAlerts(d.alerts || []);
+  });
+
+  useEffect(() => {
+    load();
+    const iv = setInterval(load, 15000);
+    return () => clearInterval(iv);
+  }, []);
+
+  const seedDemo = async () => {
+    setSeeding(true);
+    await fetch("/api/dashboard/alerts/seed-demo", { method: "POST" });
+    await load();
+    setSeeding(false);
+  };
+
+  const doAction = async (alertId, action) => {
+    setActing(alertId + action);
+    await fetch(`/api/dashboard/alerts/${alertId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action, user: "operator" }),
+    });
+    await load();
+    setActing(null);
+  };
+
+  const filtered = alerts.filter(a => {
+    const state = a.state || (a.resolved ? "RESOLVED" : "OPEN");
+    const matchState = filter === "ALL" || state === filter;
+    const matchPriority = priorityFilter === "ALL" || a.priority === priorityFilter;
+    return matchState && matchPriority;
+  });
+
+  const counts = {
+    OPEN: alerts.filter(a => (a.state||"OPEN") === "OPEN" && !a.resolved).length,
+    ACKNOWLEDGED: alerts.filter(a => (a.state||"OPEN") === "ACKNOWLEDGED").length,
+    RESOLVED: alerts.filter(a => a.resolved || (a.state||"OPEN") === "RESOLVED").length,
+  };
+
+  const alertTypeIcon = t => t === "critical" ? "🔴" : t === "warning" ? "🟡" : "🔵";
+  const stateColor = s => s === "OPEN" ? "var(--danger)" : s === "ACKNOWLEDGED" ? "var(--warning)" : "var(--success)";
+
+  return (
+    <div>
+      <div className="kpi-grid" style={{ gridTemplateColumns: "repeat(4,1fr)" }}>
+        <KpiCard label="Open" value={counts.OPEN} color="var(--danger)" icon="🔔" sub="Requires attention" />
+        <KpiCard label="Acknowledged" value={counts.ACKNOWLEDGED} color="var(--warning)" icon="👁️" sub="Under review" />
+        <KpiCard label="Resolved" value={counts.RESOLVED} color="var(--success)" icon="✅" sub="Closed" />
+        <KpiCard label="Total Alerts" value={alerts.length} color="var(--cyan)" icon="📋" sub="All time (session)" />
+      </div>
+
+      <div style={{ display: "flex", gap: 10, marginBottom: 14, flexWrap: "wrap", alignItems: "center" }}>
+        <div className="tabs">
+          {["ALL","OPEN","ACKNOWLEDGED","RESOLVED"].map(f => (
+            <div key={f} className={`tab ${filter===f?"active":""}`} onClick={() => setFilter(f)}>
+              {f === "ALL" ? "All" : f} {f !== "ALL" && counts[f] > 0 ? `(${counts[f]})` : ""}
+            </div>
+          ))}
+        </div>
+        <select value={priorityFilter} onChange={e => setPriorityFilter(e.target.value)}
+          style={{ background: "var(--bg-card)", border: "1px solid var(--border)", color: "var(--text)", padding: "6px 10px", borderRadius: 6, fontSize: 12 }}>
+          <option value="ALL">All Priorities</option>
+          <option value="HIGH">HIGH</option>
+          <option value="MEDIUM">MEDIUM</option>
+          <option value="LOW">LOW</option>
+        </select>
+        <button onClick={seedDemo} disabled={seeding}
+          style={{ background: "var(--bg-card)", border: "1px solid var(--border)", color: "var(--text-muted)", padding: "6px 12px", borderRadius: 6, cursor: "pointer", fontSize: 12 }}>
+          {seeding ? "Seeding…" : "+ Seed Demo Alerts"}
+        </button>
+      </div>
+
+      <div className="card" style={{ padding: 0 }}>
+        <table>
+          <thead>
+            <tr>
+              <th>Type</th><th>Priority</th><th>State</th><th>Message</th>
+              <th>Module</th><th>Resource</th><th>Created</th><th>Acknowledged</th><th>Resolved</th><th>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {filtered.length === 0 && (
+              <tr><td colSpan={10} style={{ textAlign: "center", color: "var(--text-muted)", padding: 24 }}>
+                No alerts match filter. {alerts.length === 0 && <span>Click "+ Seed Demo Alerts" to add sample alerts.</span>}
+              </td></tr>
+            )}
+            {filtered.map(a => {
+              const state = a.state || (a.resolved ? "RESOLVED" : "OPEN");
+              return (
+                <tr key={a.id} style={{ opacity: state === "RESOLVED" ? 0.6 : 1 }}>
+                  <td>{alertTypeIcon(a.alert_type)}</td>
+                  <td>
+                    <span className={`badge ${a.priority==="HIGH"?"badge-critical":a.priority==="MEDIUM"?"badge-warning":"badge-info"}`}>
+                      {a.priority}
+                    </span>
+                  </td>
+                  <td>
+                    <span style={{ fontWeight: 600, fontSize: 11, color: stateColor(state) }}>{state}</span>
+                  </td>
+                  <td style={{ fontSize: 12, maxWidth: 320 }}>{a.message}</td>
+                  <td><span className="tag">{a.module || "—"}</span></td>
+                  <td style={{ fontSize: 10, fontFamily: "monospace", color: "var(--text-muted)" }}>{a.resource_id || "—"}</td>
+                  <td style={{ fontSize: 10, color: "var(--text-muted)", whiteSpace: "nowrap" }}>
+                    {a.created_at ? new Date(a.created_at).toLocaleTimeString() : "—"}
+                  </td>
+                  <td style={{ fontSize: 10, color: "var(--text-muted)", whiteSpace: "nowrap" }}>
+                    {a.acknowledged_at ? new Date(a.acknowledged_at).toLocaleTimeString() : "—"}
+                    {a.acknowledged_by ? <div style={{ color: "var(--cyan)" }}>{a.acknowledged_by}</div> : null}
+                  </td>
+                  <td style={{ fontSize: 10, color: "var(--text-muted)", whiteSpace: "nowrap" }}>
+                    {a.resolved_at ? new Date(a.resolved_at).toLocaleTimeString() : "—"}
+                    {a.resolved_by ? <div style={{ color: "var(--success)" }}>{a.resolved_by}</div> : null}
+                  </td>
+                  <td style={{ whiteSpace: "nowrap" }}>
+                    {state === "OPEN" && (
+                      <button onClick={() => doAction(a.id, "acknowledge")}
+                        disabled={acting === a.id + "acknowledge"}
+                        style={{ background: "rgba(245,158,11,0.15)", border: "1px solid var(--warning)", color: "var(--warning)", padding: "3px 8px", borderRadius: 4, cursor: "pointer", fontSize: 10, marginRight: 4 }}>
+                        Ack
+                      </button>
+                    )}
+                    {(state === "OPEN" || state === "ACKNOWLEDGED") && (
+                      <button onClick={() => doAction(a.id, "resolve")}
+                        disabled={acting === a.id + "resolve"}
+                        style={{ background: "rgba(16,185,129,0.15)", border: "1px solid var(--success)", color: "var(--success)", padding: "3px 8px", borderRadius: 4, cursor: "pointer", fontSize: 10 }}>
+                        Resolve
+                      </button>
+                    )}
+                    {state === "RESOLVED" && (
+                      <span style={{ fontSize: 10, color: "var(--success)" }}>✓ Closed</span>
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+
+      <div className="card" style={{ marginTop: 14 }}>
+        <div className="card-title">📋 Alert Lifecycle</div>
+        <div style={{ display: "flex", gap: 0, alignItems: "center", justifyContent: "center", padding: "16px 0" }}>
+          {[
+            { state: "OPEN", color: "var(--danger)", desc: "Alert generated", icon: "🔴" },
+            { state: "→", color: "var(--text-muted)", desc: "", icon: "" },
+            { state: "ACKNOWLEDGED", color: "var(--warning)", desc: "Operator is investigating", icon: "🟡" },
+            { state: "→", color: "var(--text-muted)", desc: "", icon: "" },
+            { state: "RESOLVED", color: "var(--success)", desc: "Root cause addressed", icon: "🟢" },
+          ].map((s, i) => s.state === "→" ? (
+            <div key={i} style={{ fontSize: 20, color: s.color, margin: "0 16px" }}>→</div>
+          ) : (
+            <div key={i} style={{ textAlign: "center", width: 140 }}>
+              <div style={{ fontSize: 24 }}>{s.icon}</div>
+              <div style={{ fontWeight: 700, color: s.color, marginTop: 4 }}>{s.state}</div>
+              <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 2 }}>{s.desc}</div>
+            </div>
+          ))}
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 10, marginTop: 8, fontSize: 11 }}>
+          {[
+            ["Configurable Thresholds", "Voltage > 244V / < 216V, Loading > 80%, HC > 80%"],
+            ["Auto-generation", "Monitoring loop generates alerts; operator action required to close"],
+            ["PRD Module 7", "Alert Management — OPEN / ACKNOWLEDGED / RESOLVED lifecycle"],
+          ].map(([k,v]) => (
+            <div key={k} style={{ background: "var(--bg)", borderRadius: 6, padding: "8px 12px" }}>
+              <div style={{ fontWeight: 600, marginBottom: 4, color: "var(--cyan)" }}>{k}</div>
+              <div style={{ color: "var(--text-muted)" }}>{v}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── Main App ─────────────────────────────────────────────────────────────────
+
+// ─── OE Monitor Screen ───────────────────────────────────────────────────────
+
+function OEMonitorScreen() {
+  const [oeSummary, setOeSummary] = React.useState(null);
+  const [oeCurrent, setOeCurrent] = React.useState(null);
+  const [rpf, setRpf] = React.useState(null);
+  const [violations, setViolations] = React.useState([]);
+  const [forecast, setForecast] = React.useState(null);
+  const [computing, setComputing] = React.useState(false);
+  const [selDt, setSelDt] = React.useState(null);
+  const [tab, setTab] = React.useState("overview");
+
+  const refresh = () => {
+    Promise.all([
+      fetch("/api/oe/summary").then(r=>r.json()),
+      fetch("/api/oe/current").then(r=>r.json()),
+      fetch("/api/oe/rpf").then(r=>r.json()),
+      fetch("/api/oe/violations?limit=50").then(r=>r.json()),
+      fetch("/api/forecast/generation").then(r=>r.json()),
+    ]).then(([sum, cur, rpfD, viol, fore]) => {
+      setOeSummary(sum); setOeCurrent(cur); setRpf(rpfD);
+      setViolations(viol.violations || []); setForecast(fore);
+    }).catch(()=>{});
+  };
+  React.useEffect(() => { refresh(); }, []);
+
+  const triggerCompute = () => {
+    setComputing(true);
+    fetch("/api/oe/compute", { method: "POST" }).then(r=>r.json()).then(() => { refresh(); setComputing(false); }).catch(()=>setComputing(false));
+  };
+
+  const tabStyle = (t) => ({
+    padding: "6px 14px", borderRadius: "6px 6px 0 0", cursor: "pointer", fontSize: 13, border: "none",
+    background: tab === t ? "var(--accent)" : "rgba(255,255,255,0.06)", color: tab === t ? "#fff" : "var(--text-muted)",
+  });
+
+  const dts = oeCurrent?.dts || [];
+  const selDtData = selDt ? dts.find(d => d.dt_id === selDt) : null;
+
+  return (
+    <div>
+      <div style={{ display: "flex", gap: 10, alignItems: "center", marginBottom: 16, flexWrap: "wrap" }}>
+        <h2 style={{ margin: 0, color: "var(--text)" }}>Operating Envelope Monitor</h2>
+        <span style={{ fontSize: 11, color: "var(--text-muted)" }}>Last computed: {oeSummary?.last_computed ? new Date(oeSummary.last_computed).toLocaleTimeString() : "—"}</span>
+        <button onClick={triggerCompute} disabled={computing} style={{ marginLeft: "auto", padding: "6px 16px", background: "var(--accent)", color: "#fff", border: "none", borderRadius: 6, cursor: "pointer", fontSize: 12 }}>
+          {computing ? "Computing…" : "⟳ Recompute OE"}
+        </button>
+      </div>
+
+      {/* OE KPI row */}
+      {oeSummary && (
+        <div className="kpi-grid" style={{ marginBottom: 16 }}>
+          <KpiCard label="Total DTs" value={oeSummary.total_dts} sub="with DERs on Lanka LK1" color="var(--cyan)" icon="🏗️" />
+          <KpiCard label="Normal OE" value={oeSummary.oe_normal_dts} sub="DTs within envelope" color="var(--success)" icon="✅" />
+          <KpiCard label="Warning OE" value={oeSummary.oe_warning_dts} sub=">80% OE utilisation" color="#F59E0B" icon="⚠️" />
+          <KpiCard label="RPF DTs" value={oeSummary.rpf_dts} sub="Reverse power flow active" color={oeSummary.rpf_dts > 0 ? "var(--danger)" : "var(--success)"} icon="↩️" />
+          <KpiCard label="OE Exceedances" value={oeSummary.ders_exceeding_oe} sub="DERs above OE limit now" color={oeSummary.ders_exceeding_oe > 0 ? "var(--danger)" : "var(--success)"} icon="🚫" />
+        </div>
+      )}
+
+      {/* Tab bar */}
+      <div style={{ display: "flex", gap: 2, marginBottom: 0, borderBottom: "1px solid var(--border)" }}>
+        {[["overview","Fleet Overview"],["schedule","OE Schedule"],["rpf","RPF Status"],["violations","Violations"],["forecast","D+1 Forecast"]].map(([t,l]) => (
+          <button key={t} style={tabStyle(t)} onClick={() => setTab(t)}>{l}</button>
+        ))}
+      </div>
+
+      <div className="card" style={{ borderRadius: "0 6px 6px 6px", marginTop: 0 }}>
+
+        {/* OVERVIEW TAB */}
+        {tab === "overview" && (
+          <div>
+            <div style={{ fontSize: 12, color: "var(--text-muted)", marginBottom: 12 }}>
+              Click a DT row to see per-DER OE breakdown. OE = min(nameplate, voltage_DOC, thermal_HC, RPF_limit).
+            </div>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+              <thead>
+                <tr style={{ color: "var(--text-muted)" }}>
+                  {["DT ID","kVA","DERs","Consumer Load","DER Gen","OE Status","RPF","DT Loading","Voltage"].map(h => (
+                    <th key={h} style={{ padding: "6px 10px", textAlign: "left", borderBottom: "1px solid var(--border)", fontWeight: 500 }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {dts.map(dt => {
+                  const stColor = dt.oe_status === "NORMAL" ? "#10B981" : dt.oe_status === "WARNING" ? "#F59E0B" : "#EF4444";
+                  return (
+                    <tr key={dt.dt_id} onClick={() => setSelDt(selDt === dt.dt_id ? null : dt.dt_id)}
+                      style={{ borderBottom: "1px solid rgba(255,255,255,0.05)", cursor: "pointer", background: selDt === dt.dt_id ? "rgba(99,102,241,0.12)" : "transparent" }}>
+                      <td style={{ padding: "7px 10px", fontFamily: "monospace", color: "var(--accent)" }}>{dt.dt_id}</td>
+                      <td style={{ padding: "7px 10px" }}>{dt.rated_kva}</td>
+                      <td style={{ padding: "7px 10px" }}>{dt.n_ders}</td>
+                      <td style={{ padding: "7px 10px" }}>{dt.consumer_load_kw?.toFixed(1)} kW</td>
+                      <td style={{ padding: "7px 10px" }}>{dt.total_der_gen_kw?.toFixed(1)} kW</td>
+                      <td style={{ padding: "7px 10px" }}><span style={{ color: stColor, fontWeight: 600 }}>{dt.oe_status}</span></td>
+                      <td style={{ padding: "7px 10px" }}>{dt.rpf ? <span style={{ color: "#EF4444" }}>⬆ {dt.export_kw} kW</span> : <span style={{ color: "#10B981" }}>No</span>}</td>
+                      <td style={{ padding: "7px 10px" }}>{dt.dt_loading_pct?.toFixed(1)}%</td>
+                      <td style={{ padding: "7px 10px" }}>{dt.voltage_pu ? `${dt.voltage_pu.toFixed(4)} pu` : "—"}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+            {selDtData && (
+              <div style={{ marginTop: 16, background: "rgba(255,255,255,0.04)", borderRadius: 8, padding: 14 }}>
+                <div style={{ fontSize: 12, color: "var(--accent)", fontWeight: 600, marginBottom: 8 }}>
+                  Per-DER OE Breakdown — {selDtData.dt_id}
+                </div>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                  <thead>
+                    <tr style={{ color: "var(--text-muted)" }}>
+                      {["DER ID","Nameplate","Now","OE Limit","OE Util%","V-DOC","Thermal OE","RPF OE","Binding","Status"].map(h => (
+                        <th key={h} style={{ padding: "4px 8px", textAlign: "left", borderBottom: "1px solid var(--border)", fontWeight: 500 }}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(selDtData.ders || []).map(d => (
+                      <tr key={d.der_id} style={{ borderBottom: "1px solid rgba(255,255,255,0.05)" }}>
+                        <td style={{ padding: "5px 8px", fontFamily: "monospace" }}>{d.der_id}</td>
+                        <td style={{ padding: "5px 8px" }}>{d.nameplate_kw} kW</td>
+                        <td style={{ padding: "5px 8px" }}>{d.current_kw} kW</td>
+                        <td style={{ padding: "5px 8px", color: d.exceeding ? "#EF4444" : "#10B981", fontWeight: 600 }}>{d.oe_kw} kW</td>
+                        <td style={{ padding: "5px 8px" }}>{d.oe_util_pct}%</td>
+                        <td style={{ padding: "5px 8px" }}>{d.oe_voltage_kw} kW</td>
+                        <td style={{ padding: "5px 8px" }}>{d.oe_thermal_kw} kW</td>
+                        <td style={{ padding: "5px 8px" }}>{d.oe_rpf_kw} kW</td>
+                        <td style={{ padding: "5px 8px", color: "var(--text-muted)" }}>{d.binding_constraint}</td>
+                        <td style={{ padding: "5px 8px", color: d.exceeding ? "#EF4444" : "#10B981" }}>{d.exceeding ? `EXCEEDING (+${d.excess_kw}kW)` : "OK"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* SCHEDULE TAB */}
+        {tab === "schedule" && (
+          <div>
+            <div style={{ marginBottom: 10, fontSize: 12, color: "var(--text-muted)" }}>Select a DT to view its 48-block OE schedule (30-min slots, today).</div>
+            <div style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap" }}>
+              {dts.map(dt => (
+                <button key={dt.dt_id} onClick={() => setSelDt(dt.dt_id)}
+                  style={{ padding: "4px 12px", borderRadius: 20, border: "none", cursor: "pointer", fontSize: 11,
+                    background: selDt === dt.dt_id ? "var(--accent)" : "rgba(255,255,255,0.08)", color: selDt === dt.dt_id ? "#fff" : "var(--text-muted)" }}>
+                  {dt.dt_id}
+                </button>
+              ))}
+            </div>
+            {selDt && <DTScheduleView dtId={selDt} />}
+          </div>
+        )}
+
+        {/* RPF STATUS TAB */}
+        {tab === "rpf" && (
+          <div>
+            <div style={{ fontSize: 12, color: "var(--text-muted)", marginBottom: 12 }}>
+              Reverse Power Flow (RPF) occurs when DER generation exceeds consumer load behind a DT, causing net export toward the feeder. PRD alert: A-03 (P2).
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(280px,1fr))", gap: 12 }}>
+              {(rpf?.dts || []).map(dt => (
+                <div key={dt.dt_id} style={{ background: dt.rpf ? "rgba(239,68,68,0.1)" : "rgba(16,185,129,0.08)", border: `1px solid ${dt.rpf ? "rgba(239,68,68,0.3)" : "rgba(16,185,129,0.2)"}`, borderRadius: 8, padding: 14 }}>
+                  <div style={{ fontWeight: 600, marginBottom: 6, fontSize: 13 }}>{dt.dt_id}</div>
+                  <div style={{ fontSize: 12, color: dt.rpf ? "#EF4444" : "#10B981", fontWeight: 700, marginBottom: 4 }}>
+                    {dt.rpf ? `⬆ RPF: ${dt.export_kw} kW export` : "✅ No RPF"}
+                  </div>
+                  <div style={{ fontSize: 11, color: "var(--text-muted)" }}>
+                    Load: {dt.consumer_load_kw} kW | DER Gen: {dt.der_gen_kw} kW
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* VIOLATIONS TAB */}
+        {tab === "violations" && (
+          <div>
+            <div style={{ fontSize: 12, color: "var(--text-muted)", marginBottom: 12 }}>OE exceedances logged this session (DER generating above its OE limit).</div>
+            {violations.length === 0 ? (
+              <div style={{ color: "#10B981", textAlign: "center", padding: 40, fontSize: 14 }}>✅ No OE violations recorded this session</div>
+            ) : (
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                <thead>
+                  <tr style={{ color: "var(--text-muted)" }}>
+                    {["DER ID","DT","OE Limit","Actual","Excess","Timestamp"].map(h => (
+                      <th key={h} style={{ padding: "6px 10px", textAlign: "left", borderBottom: "1px solid var(--border)", fontWeight: 500 }}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {violations.map((v, i) => (
+                    <tr key={i} style={{ borderBottom: "1px solid rgba(255,255,255,0.05)" }}>
+                      <td style={{ padding: "6px 10px", fontFamily: "monospace" }}>{v.der_id}</td>
+                      <td style={{ padding: "6px 10px" }}>{v.dt_id}</td>
+                      <td style={{ padding: "6px 10px" }}>{v.oe_kw} kW</td>
+                      <td style={{ padding: "6px 10px", color: "#EF4444" }}>{v.actual_kw} kW</td>
+                      <td style={{ padding: "6px 10px", color: "#F97316", fontWeight: 600 }}>+{v.excess_kw} kW</td>
+                      <td style={{ padding: "6px 10px", color: "var(--text-muted)" }}>{v.ts ? new Date(v.ts).toLocaleTimeString() : "—"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+        )}
+
+        {/* FORECAST TAB */}
+        {tab === "forecast" && forecast && (
+          <div>
+            <div style={{ fontSize: 12, color: "var(--text-muted)", marginBottom: 8 }}>
+              D+1 forecast: {forecast.forecast_date} · Source: NASA POWER API + Ineichen-Perez clear-sky model · PR=78%
+            </div>
+            <div style={{ display: "flex", gap: 20, marginBottom: 14 }}>
+              <KpiCard label="Peak Forecast" value={(forecast.peak_forecast_kw||0).toFixed(1)} unit="kW" sub="Fleet peak tomorrow" color="var(--solar)" icon="☀️" />
+              <KpiCard label="Total Forecast" value={(forecast.total_forecast_kwh||0).toFixed(1)} unit="kWh" sub="Estimated daily generation" color="var(--cyan)" icon="⚡" />
+            </div>
+            <div style={{ fontSize: 12, color: "var(--accent)", fontWeight: 600, marginBottom: 6 }}>Fleet D+1 Generation Forecast (48 × 30-min blocks)</div>
+            <SvgLineChart
+              data={(forecast.aggregate_48_blocks||[]).map(b => ({ ...b, label: b.time }))}
+              lines={[{ key: "total_forecast_kw", label: "Forecast kW", color: "#FCD34D", fill: "#FCD34D" }]}
+              height={200}
+            />
+            <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 8 }}>
+              Last fetched: {forecast.last_fetched ? new Date(forecast.last_fetched).toLocaleString() : "—"} ·
+              <button onClick={() => fetch("/api/forecast/refresh",{method:"POST"}).then(()=>refresh())} style={{ background:"none", border:"none", color:"var(--accent)", cursor:"pointer", fontSize:11 }}> ⟳ Refresh from NASA POWER</button>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function DTScheduleView({ dtId }) {
+  const [schedule, setSchedule] = React.useState(null);
+  React.useEffect(() => {
+    fetch(`/api/oe/${dtId}/schedule`).then(r=>r.json()).then(d => setSchedule(d.blocks || [])).catch(()=>{});
+  }, [dtId]);
+
+  if (!schedule) return <div style={{ color: "var(--text-muted)", padding: 20, textAlign: "center" }}>Loading schedule…</div>;
+
+  const chartData = schedule.map(b => ({
+    label: b.time,
+    oe_total: (b.ders || []).reduce((s, d) => s + d.oe_kw, 0),
+    forecast: b.forecast_gen_kw || 0,
+    load: b.consumer_load_kw || 0,
+  }));
+
+  return (
+    <div>
+      <div style={{ fontSize: 12, color: "var(--accent)", fontWeight: 600, marginBottom: 8 }}>{dtId} — 48-block OE Schedule</div>
+      <SvgLineChart
+        data={chartData}
+        lines={[
+          { key: "oe_total", label: "Total OE (kW)", color: "#10B981", dash: "5 3" },
+          { key: "forecast", label: "Gen Forecast (kW)", color: "#FCD34D" },
+          { key: "load", label: "Consumer Load (kW)", color: "#60A5FA", dash: "3 3" },
+        ]}
+        height={200}
+      />
+      <div style={{ marginTop: 10, fontSize: 11, color: "var(--text-muted)" }}>
+        RPF forecast blocks: {schedule.filter(b => b.rpf_forecast).length} of 48
+      </div>
+    </div>
+  );
+}
 
 // ── Login ─────────────────────────────────────────────────────────────────────
 const DERMS_CREDS = [
@@ -2259,15 +3525,17 @@ function App() {
   }, []);
 
   const navItems = [
-    { id: "dashboard", icon: "📊", label: "Dashboard" },
-    { id: "fleet",     icon: "⚡", label: "DER Fleet" },
-    { id: "planning",  icon: "🗺️", label: "Planning & Modelling" },
-    { id: "scheduling",        icon: "📅", label: "Scheduling" },
-    { id: "demand-response",  icon: "📉", label: "Demand Response" },
-    { id: "control",          icon: "🎛️", label: "Control & Optimization" },
-    { id: "analytics", icon: "🤖", label: "Data Analytics" },
-    { id: "adms",      icon: "🏭", label: "ADMS / CIM" },
-    { id: "__market__", icon: "🌐", label: "L&T Market Portal ↗" },
+    { id: "dashboard",       icon: "📊", label: "Dashboard" },
+    { id: "fleet",           icon: "⚡", label: "DER Fleet" },
+    { id: "oe-monitor",      icon: "🔁", label: "OE Monitor" },
+    { id: "planning",        icon: "🗺️", label: "Planning & GIS" },
+    { id: "scheduling",      icon: "📅", label: "Scheduling" },
+    { id: "demand-response", icon: "📉", label: "Demand Response" },
+    { id: "alerts",          icon: "🔔", label: "Alerts" },
+    { id: "control",         icon: "🎛️", label: "Control & Optimization" },
+    { id: "analytics",       icon: "🤖", label: "Data Analytics" },
+    { id: "adms",            icon: "🏭", label: "ADMS / CIM" },
+    { id: "__prosumer__",    icon: "🏠", label: "Prosumer Portal ↗" },
   ];
 
   if (!auth) return <LoginScreen onLogin={(user, role) => setAuth({ user, role })} />;
@@ -2281,10 +3549,13 @@ function App() {
         </div>
         <div className="nav">
           {navItems.map(n => (
-            <div key={n.id} className={`nav-item ${screen === n.id ? "active" : ""}`} onClick={() => n.id === "__market__" ? window.open("/market", "_blank") : setScreen(n.id)} style={n.id==="__market__"?{marginTop:8,borderTop:"1px solid var(--border)",paddingTop:14}:{}}>
+            <div key={n.id} className={`nav-item ${screen === n.id ? "active" : ""}`} onClick={() => {
+              if (n.id === "__prosumer__") window.open("/prosumer", "_blank");
+              else setScreen(n.id);
+            }} style={n.id==="__prosumer__"?{marginTop:8,borderTop:"1px solid var(--border)",paddingTop:14}:{}}>
               <span>{n.icon}</span>
               <span>{n.label}</span>
-              {n.id === "dashboard" && alertCount > 0 && <span className="nav-badge">{alertCount}</span>}
+              {n.id === "alerts" && alertCount > 0 && <span className="nav-badge">{alertCount}</span>}
               {n.id === "demand-response" && drActiveCount > 0 && <span className="nav-badge">{drActiveCount}</span>}
             </div>
           ))}
@@ -2332,9 +3603,11 @@ function App() {
         <div className="content">
           {screen === "dashboard"  && <DashboardScreen summary={summary} genProfile={genProfile} ders={ders} />}
           {screen === "fleet"      && <DERFleetScreen ders={ders} />}
+          {screen === "oe-monitor" && <OEMonitorScreen />}
           {screen === "planning"   && <PlanningScreen ders={ders} summary={summary} />}
           {screen === "scheduling"       && <SchedulingScreen ders={ders} />}
           {screen === "demand-response" && <DemandResponseScreen ders={ders} summary={summary} />}
+          {screen === "alerts"     && <AlertsScreen />}
           {screen === "control"         && <ControlScreen ders={ders} summary={summary} />}
           {screen === "analytics"  && <AnalyticsScreen ders={ders} genProfile={genProfile} />}
           {screen === "adms"       && <ADMSScreen />}

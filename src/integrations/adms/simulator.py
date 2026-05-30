@@ -25,27 +25,35 @@ router = APIRouter(prefix="/sim/adms", tags=["ADMS Simulator"])
 
 SUBSTATIONS = [
     {"id": "S-VAR-001", "name": "Varanasi Main 132kV Substation", "voltage_kv": 132},
+    {"id": "SS-BHU-001", "name": "33/11 KV BHU Substation",       "voltage_kv": 33},
 ]
 
+# LK1 = real pilot feeder (data from DT REPORT.xlsx + MDMS master)
+# FDR-01/02 = simulated feeders for broader demonstration context
 FEEDERS = [
-    {"id": "FDR-01", "name": "Sigra-Lanka Feeder",       "substation_id": "S-VAR-001", "rated_mva": 8.0,  "voltage_kv": 33},
-    {"id": "FDR-02", "name": "Bhelupur-Cant Feeder",     "substation_id": "S-VAR-001", "rated_mva": 10.0, "voltage_kv": 33},
-    {"id": "FDR-03", "name": "Sarnath-Nadesar Feeder",   "substation_id": "S-VAR-001", "rated_mva": 6.0,  "voltage_kv": 33},
+    {"id": "LK1",    "name": "Lanka Feeder (LK1) — Real Pilot",   "substation_id": "SS-BHU-001", "rated_mva": 5.0,  "voltage_kv": 11},
+    {"id": "FDR-01", "name": "Sigra-Lanka Feeder (Simulated)",     "substation_id": "S-VAR-001",  "rated_mva": 8.0,  "voltage_kv": 33},
+    {"id": "FDR-02", "name": "Bhelupur-Cant Feeder (Simulated)",   "substation_id": "S-VAR-001",  "rated_mva": 10.0, "voltage_kv": 33},
 ]
 
 DTS = [
-    # Feeder 1
+    # ── LK1: Real pilot DTs (from DT REPORT.xlsx, kVA assumed — configurable) ──
+    {"id": "LK1-DT-01", "name": "LK1D-05",                    "feeder_id": "LK1",    "rated_kva": 100, "lat": 25.2688, "lng": 82.9948},
+    {"id": "LK1-DT-02", "name": "Madhav Market",              "feeder_id": "LK1",    "rated_kva": 250, "lat": 25.2670, "lng": 82.9912},
+    {"id": "LK1-DT-03", "name": "Madhav Market-2",            "feeder_id": "LK1",    "rated_kva": 100, "lat": 25.2665, "lng": 82.9905},
+    {"id": "LK1-DT-04", "name": "Saket Nagar",                "feeder_id": "LK1",    "rated_kva": 160, "lat": 25.2650, "lng": 82.9875},
+    {"id": "LK1-DT-05", "name": "Rasmi Nagar",                "feeder_id": "LK1",    "rated_kva": 250, "lat": 25.2710, "lng": 82.9858},
+    {"id": "LK1-DT-06", "name": "Tara Nagar Colony",          "feeder_id": "LK1",    "rated_kva": 100, "lat": 25.2748, "lng": 82.9882},
+    {"id": "LK1-DT-07", "name": "Madrawa",                    "feeder_id": "LK1",    "rated_kva": 100, "lat": 25.2520, "lng": 82.9850},
+    {"id": "LK1-DT-08", "name": "Sanketmochan Purani Gali",   "feeder_id": "LK1",    "rated_kva": 160, "lat": 25.2838, "lng": 83.0093},
+    # ── FDR-01: Simulated ─────────────────────────────────────────────────────
     {"id": "DT-VAR-0234", "name": "Sigra DT-1",       "feeder_id": "FDR-01", "rated_kva": 400, "lat": 25.3240, "lng": 82.9770},
     {"id": "DT-VAR-0156", "name": "Lanka DT-2",        "feeder_id": "FDR-01", "rated_kva": 250, "lat": 25.2677, "lng": 82.9913},
     {"id": "DT-VAR-0312", "name": "Assi Ghat DT-3",   "feeder_id": "FDR-01", "rated_kva": 315, "lat": 25.2835, "lng": 83.0094},
-    # Feeder 2
+    # ── FDR-02: Simulated ─────────────────────────────────────────────────────
     {"id": "DT-VAR-0089", "name": "Bhelupur DT-4",    "feeder_id": "FDR-02", "rated_kva": 500, "lat": 25.2994, "lng": 82.9980},
     {"id": "DT-VAR-0445", "name": "Cantonment DT-5",  "feeder_id": "FDR-02", "rated_kva": 400, "lat": 25.3310, "lng": 82.9540},
     {"id": "DT-VAR-0267", "name": "Mahmoorganj DT-6", "feeder_id": "FDR-02", "rated_kva": 315, "lat": 25.3170, "lng": 82.9620},
-    # Feeder 3
-    {"id": "DT-VAR-0378", "name": "Sarnath DT-7",     "feeder_id": "FDR-03", "rated_kva": 250, "lat": 25.3820, "lng": 83.0245},
-    {"id": "DT-VAR-0491", "name": "Nadesar DT-8",     "feeder_id": "FDR-03", "rated_kva": 315, "lat": 25.3450, "lng": 82.9820},
-    {"id": "DT-VAR-0502", "name": "Ramnagar DT-9",    "feeder_id": "FDR-03", "rated_kva": 200, "lat": 25.2610, "lng": 83.0420},
 ]
 
 

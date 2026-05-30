@@ -67,13 +67,37 @@ _bg_tasks: List[asyncio.Task] = []
 
 
 async def broadcast_loop():
-    """Broadcast real-time fleet summary to all WebSocket clients every 5s."""
+    """Broadcast real-time fleet summary + OE status to all WebSocket clients every 5s."""
+    _tick = 0
     while True:
         await asyncio.sleep(5)
         if manager.active:
             try:
                 summary = get_fleet_summary()
                 await manager.broadcast({"type": "fleet_summary", "data": summary})
+
+                # Every 30s also push OE + alert badge counts
+                _tick += 1
+                if _tick % 6 == 0:
+                    from src.loadflow.oe_engine import get_oe_current, get_rpf_status
+                    oe = get_oe_current()
+                    rpf = get_rpf_status()
+                    alerts = summary.get("recent_alerts", [])
+                    open_alerts = [a for a in alerts if not a.get("resolved")]
+                    await manager.broadcast({
+                        "type": "oe_update",
+                        "data": {
+                            "rpf_count": sum(1 for v in rpf.values() if v.get("rpf")),
+                            "oe_exceeding_count": sum(
+                                1 for dt in oe.values()
+                                for d in dt.get("ders", []) if d.get("exceeding")
+                            ),
+                            "open_alert_count": len(open_alerts),
+                            "p1_alert_count": sum(
+                                1 for a in open_alerts if a.get("priority") in ("HIGH", "CRITICAL")
+                            ),
+                        },
+                    })
             except Exception as e:
                 logger.error(f"Broadcast error: {e}")
 
@@ -113,7 +137,9 @@ async def lifespan(app: FastAPI):
     logger.info(f" IEEE 2030.5:      http://localhost:{settings.port}/api/2030.5/dcap")
     logger.info(f" ADMS Simulator:   http://localhost:{settings.port}/sim/adms/status")
     logger.info(f" Dashboard:        http://localhost:{settings.port}/ui")
-    logger.info(f" Market Portal:    http://localhost:{settings.port}/market")
+    logger.info(f" Prosumer Portal:  http://localhost:{settings.port}/prosumer")
+    logger.info(f" OE API:           http://localhost:{settings.port}/api/oe/summary")
+    logger.info(f" Forecast API:     http://localhost:{settings.port}/api/forecast/generation")
     logger.info(f" API Docs:         http://localhost:{settings.port}/docs")
     logger.info("=" * 60)
 
@@ -152,6 +178,10 @@ from src.api.adms_routes import router as adms_router
 from src.api.dashboard_routes import router as dashboard_router
 from src.api.dr_routes import router as dr_router
 from src.api.market_routes import router as market_router
+from src.api.loadflow_routes import router as loadflow_router
+from src.api.prosumer_routes import router as prosumer_router
+from src.api.oe_routes import router as oe_router
+from src.api.forecast_routes import router as forecast_router
 from src.integrations.adms.simulator import router as adms_sim_router
 from src.integrations.ieee2030_5.server import router as ieee_router
 
@@ -160,6 +190,10 @@ app.include_router(adms_router)
 app.include_router(dashboard_router)
 app.include_router(dr_router)
 app.include_router(market_router)
+app.include_router(loadflow_router)
+app.include_router(prosumer_router)
+app.include_router(oe_router)
+app.include_router(forecast_router)
 app.include_router(adms_sim_router)
 app.include_router(ieee_router)
 
@@ -188,6 +222,16 @@ async def market_portal():
         with open(market_path) as f:
             return HTMLResponse(f.read())
     return HTMLResponse("<h1>Market portal not found</h1>")
+
+
+@app.get("/prosumer", response_class=HTMLResponse)
+async def prosumer_portal():
+    """Serve the prosumer self-service portal."""
+    prosumer_path = os.path.join(static_dir, "prosumer.html")
+    if os.path.exists(prosumer_path):
+        with open(prosumer_path) as f:
+            return HTMLResponse(f.read())
+    return HTMLResponse("<h1>Prosumer portal not found</h1>")
 
 
 @app.get("/")

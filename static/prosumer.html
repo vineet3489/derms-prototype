@@ -1,0 +1,588 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DERMS — Prosumer Self-Service Portal</title>
+<script src="https://unpkg.com/react@18.2.0/umd/react.production.min.js"></script>
+<script src="https://unpkg.com/react-dom@18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone@7.23.6/babel.min.js"></script>
+<style>
+:root {
+  --bg: #0B1121; --bg-card: #151F32; --bg-hover: #1E2D47;
+  --primary: #0A2540; --secondary: #1A4B6E; --accent: #F7B32B;
+  --success: #10B981; --warning: #F59E0B; --danger: #EF4444;
+  --solar: #FCD34D; --grid: #60A5FA; --purple: #8B5CF6; --cyan: #06B6D4;
+  --text: #F1F5F9; --text-muted: #8B9CB8; --border: #2A3A52;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { background: var(--bg); color: var(--text); font-family: 'Segoe UI', sans-serif; font-size: 14px; min-height: 100vh; }
+.app { max-width: 960px; margin: 0 auto; padding: 24px 16px; }
+.header { text-align: center; margin-bottom: 32px; }
+.logo { font-size: 36px; margin-bottom: 8px; }
+.title { font-size: 22px; font-weight: 800; color: var(--accent); }
+.subtitle { font-size: 13px; color: var(--text-muted); margin-top: 4px; }
+.card { background: var(--bg-card); border: 1px solid var(--border); border-radius: 10px; padding: 20px; margin-bottom: 16px; }
+.card-title { font-size: 12px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 14px; }
+.kpi-grid { display: grid; grid-template-columns: repeat(3,1fr); gap: 12px; margin-bottom: 16px; }
+.kpi-card { background: var(--bg-card); border: 1px solid var(--border); border-radius: 10px; padding: 14px; }
+.kpi-label { font-size: 11px; color: var(--text-muted); text-transform: uppercase; }
+.kpi-value { font-size: 24px; font-weight: 700; margin: 4px 0; }
+.kpi-sub { font-size: 11px; color: var(--text-muted); }
+.login-box { max-width: 400px; margin: 60px auto; }
+.input { width: 100%; background: var(--bg); border: 1px solid var(--border); color: var(--text); border-radius: 7px; padding: 10px 14px; font-size: 13px; margin-bottom: 12px; box-sizing: border-box; }
+.input:focus { outline: none; border-color: var(--accent); }
+.btn { width: 100%; padding: 11px; background: var(--accent); color: #000; font-weight: 700; font-size: 13px; border: none; border-radius: 7px; cursor: pointer; }
+.btn:hover { opacity: 0.9; }
+.btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.btn-sm { padding: 6px 14px; border-radius: 5px; font-size: 12px; font-weight: 600; cursor: pointer; border: none; }
+.tab-bar { display: flex; gap: 4px; background: var(--bg-card); border-radius: 8px; padding: 4px; border: 1px solid var(--border); margin-bottom: 16px; }
+.tab { padding: 7px 16px; border-radius: 6px; cursor: pointer; font-size: 12px; color: var(--text-muted); }
+.tab.active { background: var(--secondary); color: var(--text); }
+table { width: 100%; border-collapse: collapse; font-size: 12px; }
+th { text-align: left; padding: 8px 10px; color: var(--text-muted); font-weight: 600; text-transform: uppercase; font-size: 10px; border-bottom: 1px solid var(--border); }
+td { padding: 8px 10px; border-bottom: 1px solid rgba(42,58,82,0.5); }
+.badge { display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 12px; font-size: 10px; font-weight: 600; }
+.badge-green { background: rgba(16,185,129,0.15); color: var(--success); border: 1px solid rgba(16,185,129,0.3); }
+.badge-red { background: rgba(239,68,68,0.15); color: var(--danger); border: 1px solid rgba(239,68,68,0.3); }
+.badge-yellow { background: rgba(245,158,11,0.15); color: var(--warning); border: 1px solid rgba(245,158,11,0.3); }
+.loading { text-align: center; padding: 40px; color: var(--text-muted); }
+.demo-hint { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 10px 14px; font-family: monospace; font-size: 12px; margin-bottom: 14px; line-height: 1.8; }
+.status-bar { display: flex; align-items: center; justify-content: space-between; background: var(--bg); border-radius: 8px; padding: 10px 16px; margin-bottom: 16px; font-size: 12px; }
+.stat-row { display: flex; gap: 8px; flex-wrap: wrap; }
+.stat-pill { background: var(--bg-card); border: 1px solid var(--border); border-radius: 16px; padding: 4px 12px; font-size: 11px; }
+.bar-track { height: 8px; background: var(--bg); border-radius: 4px; overflow: hidden; margin-top: 6px; }
+.bar-fill { height: 100%; border-radius: 4px; transition: width 0.3s; }
+::-webkit-scrollbar { width: 6px; } ::-webkit-scrollbar-track { background: transparent; } ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+@media (max-width: 640px) { .kpi-grid { grid-template-columns: 1fr 1fr; } }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script type="text/babel">
+const { useState, useEffect, useCallback } = React;
+
+const API = "";
+
+async function apiFetch(path) {
+  try {
+    const r = await fetch(API + path);
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    return await r.json();
+  } catch(e) { console.warn(`API ${path}:`, e.message); return null; }
+}
+
+// ── Login Screen ──────────────────────────────────────────────────────────────
+function LoginScreen({ onLogin }) {
+  const [consumerId, setConsumerId] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [ders, setDers] = useState([]);
+
+  useEffect(() => {
+    apiFetch("/api/prosumer/ders").then(d => {
+      if (d) setDers(d.prosumers || []);
+    });
+  }, []);
+
+  const handleLogin = async () => {
+    if (!consumerId.trim()) return;
+    setLoading(true); setError("");
+    const d = await apiFetch(`/api/prosumer/${consumerId.trim()}/dashboard`);
+    if (d) {
+      onLogin(consumerId.trim(), d);
+    } else {
+      setError("Consumer ID not found. Please check your consumer number on your PUVVNL bill.");
+    }
+    setLoading(false);
+  };
+
+  return (
+    <div className="app">
+      <div className="header">
+        <div className="logo">☀️</div>
+        <div className="title">Prosumer Self-Service Portal</div>
+        <div className="subtitle">Varanasi Pilot — PUVVNL / L&T DERMS</div>
+      </div>
+      <div className="login-box">
+        <div className="card">
+          <div className="card-title">Sign in with your Consumer ID</div>
+          <div className="demo-hint">
+            <div style={{color: "var(--text-muted)", marginBottom: 4}}>Demo — click to fill (Lanka Feeder LK1):</div>
+            {ders.slice(0,5).map(d => (
+              <div key={d.consumer_id} style={{cursor:"pointer", color:"var(--accent)"}} onClick={() => setConsumerId(d.consumer_id)}>
+                {d.consumer_id} — {d.nameplate_kw}kWp ({d.dt_id})
+              </div>
+            ))}
+            {ders.length === 0 && <div style={{color:"var(--text-muted)"}}>Loading prosumers…</div>}
+          </div>
+          <input className="input" placeholder="Enter Consumer ID"
+            value={consumerId} autoFocus
+            onChange={e => setConsumerId(e.target.value)}
+            onKeyDown={e => e.key === "Enter" && handleLogin()} />
+          <button className="btn" onClick={handleLogin} disabled={loading || !consumerId.trim()}>
+            {loading ? "Looking up…" : "View My Portal"}
+          </button>
+          {error && <div style={{color:"var(--danger)",fontSize:12,marginTop:10,textAlign:"center"}}>{error}</div>}
+        </div>
+        <div style={{textAlign:"center",fontSize:11,color:"var(--text-muted)",marginTop:12}}>
+          L&T DES · DERMS Prototype · <a href="/ui" style={{color:"var(--accent)"}}>Operator Dashboard →</a>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Generation Chart (SVG) ────────────────────────────────────────────────────
+function SolarProfileChart({ slots, height = 160, oeLimit = null }) {
+  if (!slots || slots.length === 0) return null;
+  const W = 700, H = height, PL = 32, PR = 8, PT = 6, PB = 22;
+  const cw = W - PL - PR, ch = H - PT - PB;
+  const maxV = Math.max(...slots.map(s => s.gen_kw), oeLimit || 0, 0.1);
+  const xs = i => PL + (i / (slots.length - 1)) * cw;
+  const ys = v => PT + ch - (v / maxV) * ch;
+  const pts = slots.map((s, i) => `${xs(i)},${ys(s.gen_kw)}`).join(" ");
+  const area = `M${xs(0)},${PT+ch} ` + slots.map((s,i) => `L${xs(i)},${ys(s.gen_kw)}`).join(" ") + ` L${xs(slots.length-1)},${PT+ch} Z`;
+  const labelEvery = 8;
+  const oeY = oeLimit != null ? ys(oeLimit) : null;
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} style={{width:"100%",height}} preserveAspectRatio="none">
+      {[0,0.25,0.5,0.75,1].map(t => (
+        <line key={t} x1={PL} x2={W-PR} y1={PT+ch*t} y2={PT+ch*t} stroke="#2A3A52" strokeDasharray="3 3" />
+      ))}
+      <path d={area} fill="#FCD34D" opacity={0.2} />
+      <polyline points={pts} fill="none" stroke="#FCD34D" strokeWidth={2} />
+      {oeY != null && (
+        <g>
+          <line x1={PL} x2={W-PR} y1={oeY} y2={oeY} stroke="#10B981" strokeWidth={1.5} strokeDasharray="6 3" />
+          <rect x={W-PR-44} y={oeY-13} width={42} height={13} fill="#0B1121" rx={2} />
+          <text x={W-PR-2} y={oeY-2} textAnchor="end" fontSize={9} fill="#10B981" fontWeight="700">OE {oeLimit.toFixed(1)}kW</text>
+        </g>
+      )}
+      {slots.map((s,i) => i % labelEvery === 0 && (
+        <text key={i} x={xs(i)} y={H-6} textAnchor="middle" fontSize={9} fill="#8B9CB8">{s.time}</text>
+      ))}
+      {[0,0.5,1].map(t => (
+        <text key={t} x={PL-4} y={ys(maxV*t)+4} textAnchor="end" fontSize={9} fill="#8B9CB8">{(maxV*t).toFixed(1)}</text>
+      ))}
+    </svg>
+  );
+}
+
+// ── OE Card ───────────────────────────────────────────────────────────────────
+function OECard({ derOe }) {
+  if (!derOe) return (
+    <div className="card" style={{borderColor:"var(--border)"}}>
+      <div className="card-title">🔁 Operating Envelope (OE)</div>
+      <div style={{color:"var(--text-muted)",fontSize:12,padding:"10px 0"}}>OE not yet computed — check back after system startup (runs every 30 min).</div>
+    </div>
+  );
+  const statusColor = derOe.exceeding ? "var(--danger)" : derOe.oe_status === "WARNING" ? "var(--warning)" : "var(--success)";
+  const statusLabel = derOe.exceeding ? "⚠ EXCEEDING OE" : derOe.oe_status === "WARNING" ? "⚠ NEAR LIMIT" : "✓ WITHIN OE";
+  return (
+    <div className="card" style={{borderColor: derOe.exceeding ? "var(--danger)" : "var(--border)"}}>
+      <div className="card-title">🔁 My Operating Envelope (OE)</div>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:10,marginBottom:12}}>
+        <div style={{background:"var(--bg)",borderRadius:6,padding:"10px 12px",textAlign:"center"}}>
+          <div style={{fontSize:11,color:"var(--text-muted)"}}>OE Limit</div>
+          <div style={{fontSize:22,fontWeight:700,color:"var(--success)"}}>{derOe.oe_kw}<span style={{fontSize:12,color:"var(--text-muted)",marginLeft:2}}>kW</span></div>
+          <div style={{fontSize:10,color:"var(--text-muted)"}}>Max allowed now</div>
+        </div>
+        <div style={{background:"var(--bg)",borderRadius:6,padding:"10px 12px",textAlign:"center"}}>
+          <div style={{fontSize:11,color:"var(--text-muted)"}}>Currently Generating</div>
+          <div style={{fontSize:22,fontWeight:700,color: derOe.exceeding ? "var(--danger)" : "var(--solar)"}}>{(derOe.current_kw || 0).toFixed(1)}<span style={{fontSize:12,color:"var(--text-muted)",marginLeft:2}}>kW</span></div>
+          <div style={{fontSize:10,color:"var(--text-muted)"}}>Live output</div>
+        </div>
+        <div style={{background:"var(--bg)",borderRadius:6,padding:"10px 12px",textAlign:"center"}}>
+          <div style={{fontSize:11,color:"var(--text-muted)"}}>Status</div>
+          <div style={{fontSize:13,fontWeight:700,color:statusColor,marginTop:4}}>{statusLabel}</div>
+          <div style={{fontSize:10,color:"var(--text-muted)"}}>Binding: {derOe.binding_constraint || "—"}</div>
+        </div>
+      </div>
+      <div style={{background:"var(--bg)",borderRadius:6,padding:"10px 14px",fontSize:11,color:"var(--text-muted)"}}>
+        <strong style={{color:"var(--text)"}}>About your OE:</strong> Your Operating Envelope is the maximum generation allowed
+        by the grid at your connection point, computed from load flow analysis. It considers transformer thermal limits,
+        voltage constraints, and reverse power flow prevention. Exceeding your OE may trigger a curtailment notice.
+      </div>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginTop:10,fontSize:11}}>
+        {[
+          ["Nameplate", `${derOe.nameplate_kw} kW`],
+          ["Thermal HC Limit", `${derOe.oe_thermal_kw?.toFixed(1) || "—"} kW`],
+          ["Voltage DOC", `${derOe.oe_voltage_kw?.toFixed(1) || "—"} kW`],
+          ["RPF Limit", `${derOe.oe_rpf_kw?.toFixed(1) || "—"} kW`],
+          ["Binding Constraint", derOe.binding_constraint || "—"],
+          ["Last Updated", derOe.computed_at ? new Date(derOe.computed_at).toLocaleTimeString() : "—"],
+        ].map(([k,v]) => (
+          <div key={k} style={{background:"var(--bg)",borderRadius:5,padding:"6px 10px"}}>
+            <div style={{color:"var(--text-muted)",fontSize:10}}>{k}</div>
+            <div style={{fontWeight:600,fontSize:12}}>{v}</div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ── My Violations Tab ─────────────────────────────────────────────────────────
+function ViolationsTab({ derId }) {
+  const [violations, setViolations] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    apiFetch("/api/oe/violations?limit=100").then(d => {
+      if (d) {
+        const mine = derId ? d.violations.filter(v => v.der_id === derId) : d.violations;
+        setViolations(mine);
+      }
+      setLoading(false);
+    });
+  }, [derId]);
+
+  if (loading) return <div className="loading">Loading violation log…</div>;
+
+  return (
+    <div>
+      <div className="card">
+        <div className="card-title">🚨 My OE Exceedance Log</div>
+        {violations.length === 0 ? (
+          <div style={{textAlign:"center",padding:"30px 0",color:"var(--success)"}}>
+            <div style={{fontSize:32}}>✅</div>
+            <div style={{marginTop:8,fontWeight:600}}>No OE violations recorded</div>
+            <div style={{fontSize:12,color:"var(--text-muted)",marginTop:4}}>Your system is operating within its Operating Envelope.</div>
+          </div>
+        ) : (
+          <table>
+            <thead>
+              <tr><th>Time</th><th>OE Limit (kW)</th><th>Actual (kW)</th><th>Excess (kW)</th><th>Binding</th></tr>
+            </thead>
+            <tbody>
+              {violations.map((v, i) => (
+                <tr key={i}>
+                  <td style={{color:"var(--text-muted)"}}>{v.ts ? new Date(v.ts).toLocaleString() : "—"}</td>
+                  <td style={{color:"var(--success)",fontWeight:600}}>{v.oe_kw}</td>
+                  <td style={{color:"var(--danger)",fontWeight:600}}>{v.actual_kw?.toFixed(1) || "—"}</td>
+                  <td style={{color:"var(--danger)"}}>{v.excess_kw?.toFixed(2) || "—"}</td>
+                  <td><span className="badge badge-yellow">{v.binding_constraint || "—"}</span></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+      <div className="card" style={{borderColor:"var(--border)"}}>
+        <div className="card-title">ℹ️ About OE Violations</div>
+        <div style={{fontSize:12,color:"var(--text-muted)",lineHeight:1.8}}>
+          An OE violation occurs when your solar generation exceeds the limit set by the grid operator.
+          Persistent violations may result in PUVVNL issuing a curtailment instruction via IEEE 2030.5.
+          No penalties are applicable in Phase 1 of the pilot.
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function MonthlyBarChart({ data, height = 140 }) {
+  if (!data || data.length === 0) return null;
+  const W = 700, H = height, PL = 36, PR = 8, PT = 6, PB = 28;
+  const cw = W - PL - PR, ch = H - PT - PB;
+  const maxV = Math.max(...data.map(d => d.gen_kwh), 1);
+  const bw = (cw / data.length) * 0.65;
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} style={{width:"100%",height}} preserveAspectRatio="none">
+      {[0,0.5,1].map(t => (
+        <line key={t} x1={PL} x2={W-PR} y1={PT+ch*t} y2={PT+ch*t} stroke="#2A3A52" strokeDasharray="3 3" />
+      ))}
+      {data.map((d,i) => {
+        const gx = PL + (i / data.length) * cw + (cw/data.length - bw)/2;
+        const bh = (d.gen_kwh/maxV)*ch;
+        return (
+          <g key={i}>
+            <rect x={gx} y={PT+ch-bh} width={bw} height={bh} fill="#FCD34D" rx={2} opacity={0.85} />
+            <text x={gx+bw/2} y={H-10} textAnchor="middle" fontSize={9} fill="#8B9CB8">{d.month}</text>
+          </g>
+        );
+      })}
+      {[0,0.5,1].map(t => (
+        <text key={t} x={PL-4} y={PT+ch-(ch*t)+4} textAnchor="end" fontSize={9} fill="#8B9CB8">{Math.round(maxV*t)}</text>
+      ))}
+    </svg>
+  );
+}
+
+// ── Dashboard Screen ──────────────────────────────────────────────────────────
+function DashboardScreen({ consumerId, data, bills, onLogout }) {
+  const [activeTab, setActiveTab] = useState("overview");
+  const [oeData, setOeData] = useState(null);
+
+  const { today, this_month, lifetime, monthly_generation, net_metering } = data;
+  const statusColor = data.status === "Online" ? "var(--success)" : "var(--danger)";
+
+  useEffect(() => {
+    if (!data.dt_id) return;
+    apiFetch(`/api/oe/${data.dt_id}`).then(d => {
+      if (!d || d.status === "not_computed") return;
+      const myDer = (d.ders || []).find(r => r.der_id === data.der_id);
+      if (myDer) setOeData({ ...myDer, computed_at: d.computed_at });
+    });
+  }, [data.dt_id, data.der_id]);
+
+  return (
+    <div className="app">
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
+        <div>
+          <div style={{ fontSize: 18, fontWeight: 700, color: "var(--accent)" }}>☀️ My Solar Dashboard</div>
+          <div style={{ fontSize: 12, color: "var(--text-muted)" }}>Consumer: {consumerId} · Meter: {data.meter_id} · {data.nameplate_kw} kWp system</div>
+        </div>
+        <button onClick={onLogout}
+          style={{ background: "transparent", border: "1px solid var(--border)", color: "var(--text-muted)", padding: "6px 14px", borderRadius: 6, cursor: "pointer", fontSize: 12 }}>
+          Sign Out
+        </button>
+      </div>
+
+      <div className="status-bar">
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <span style={{ width: 10, height: 10, borderRadius: "50%", background: statusColor, display: "inline-block" }}></span>
+          <span style={{ fontWeight: 600 }}>{data.status}</span>
+          <span style={{ color: "var(--solar)", fontWeight: 600, marginLeft: 8 }}>
+            Now: {(data.current_kw || 0).toFixed(1)} kW generating
+          </span>
+        </div>
+        <div className="stat-row">
+          <span className="stat-pill">DT: {data.dt_id}</span>
+          <span className="stat-pill">Feeder: {data.feeder_id}</span>
+          <span className="stat-pill">Commissioned: {data.commission_date || "—"}</span>
+          <span className="stat-pill">{data.metering_type} metering</span>
+        </div>
+      </div>
+
+      <div className="kpi-grid">
+        <div className="kpi-card">
+          <div className="kpi-label">Today's Generation</div>
+          <div className="kpi-value" style={{color:"var(--solar)"}}>{today.gen_kwh}<span style={{fontSize:14,color:"var(--text-muted)",marginLeft:4}}>kWh</span></div>
+          <div className="kpi-sub">Peak: {today.peak_kw} kW</div>
+        </div>
+        <div className="kpi-card">
+          <div className="kpi-label">This Month</div>
+          <div className="kpi-value" style={{color:"var(--success)"}}>{this_month.gen_kwh}<span style={{fontSize:14,color:"var(--text-muted)",marginLeft:4}}>kWh</span></div>
+          <div className="kpi-sub">Export: {this_month.export_kwh} kWh · Credit: ₹{this_month.net_credit_inr.toFixed(0)}</div>
+        </div>
+        <div className="kpi-card">
+          <div className="kpi-label">Total Earnings</div>
+          <div className="kpi-value" style={{color:"var(--accent)"}}>₹{lifetime.total_credit_inr.toFixed(0)}</div>
+          <div className="kpi-sub">{lifetime.total_export_kwh.toFixed(0)} kWh exported · {lifetime.dr_events_participated} DR events</div>
+        </div>
+      </div>
+
+      <div className="tab-bar">
+        {[["overview","⚡ Overview"],["generation","☀️ Generation"],["billing","💰 Billing"],["netmeter","🔄 Net Metering"],["oe","🔁 My OE"]].map(([id,label]) => (
+          <div key={id} className={`tab ${activeTab===id?"active":""}`} onClick={() => setActiveTab(id)}>{label}</div>
+        ))}
+      </div>
+
+      {activeTab === "overview" && (
+        <div>
+          <OECard derOe={oeData} />
+          <div className="card">
+            <div className="card-title">☀️ Today's Solar Generation Profile</div>
+            <SolarProfileChart slots={today.profile} height={160} oeLimit={oeData ? oeData.oe_kw : null} />
+            <div style={{fontSize:11,color:"var(--text-muted)",marginTop:6}}>
+              Generation (kW) vs time of day (IST)
+              {oeData && <span style={{color:"var(--success)",marginLeft:8}}>— green dashed line = your OE limit ({oeData.oe_kw} kW)</span>}
+            </div>
+          </div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16}}>
+            <div className="card">
+              <div className="card-title">📊 Monthly Generation (kWh)</div>
+              <MonthlyBarChart data={monthly_generation} height={140} />
+            </div>
+            <div className="card">
+              <div className="card-title">🌟 System Details</div>
+              <div style={{display:"grid",gap:8,fontSize:12}}>
+                {[
+                  ["System Size", `${data.nameplate_kw} kWp`],
+                  ["DER ID", data.der_id],
+                  ["Distribution Transformer", data.dt_id],
+                  ["Feeder", data.feeder_id],
+                  ["Net Metering Tariff", `₹${net_metering.tariff_inr_per_kwh}/kWh`],
+                  ["Export Percentage", `~${net_metering.export_pct}%`],
+                  ["Billing Scheme", net_metering.scheme],
+                ].map(([k,v]) => (
+                  <div key={k} style={{background:"var(--bg)",borderRadius:6,padding:"6px 10px",display:"flex",justifyContent:"space-between"}}>
+                    <span style={{color:"var(--text-muted)"}}>{k}</span>
+                    <span style={{fontWeight:600,fontSize:11}}>{v}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+          {lifetime.dr_events_participated > 0 && (
+            <div className="card">
+              <div className="card-title">📉 DR Programme Participation</div>
+              <div style={{display:"flex",gap:16,fontSize:12}}>
+                <div style={{background:"var(--bg)",borderRadius:6,padding:"10px 16px",textAlign:"center"}}>
+                  <div style={{fontSize:22,fontWeight:700,color:"var(--success)"}}>{lifetime.dr_events_participated}</div>
+                  <div style={{color:"var(--text-muted)"}}>Events Participated</div>
+                </div>
+                <div style={{background:"var(--bg)",borderRadius:6,padding:"10px 16px",textAlign:"center"}}>
+                  <div style={{fontSize:22,fontWeight:700,color:"var(--solar)"}}>₹{lifetime.dr_savings_inr.toFixed(0)}</div>
+                  <div style={{color:"var(--text-muted)"}}>Total DR Incentives Earned</div>
+                </div>
+                <div style={{flex:1,background:"var(--bg)",borderRadius:6,padding:"10px 16px",fontSize:11,color:"var(--text-muted)"}}>
+                  <div style={{fontWeight:600,color:"var(--text)",marginBottom:4}}>About the DR Programme</div>
+                  When the grid needs load relief, PUVVNL sends you an invitation. Accepting and reducing your load
+                  earns you ₹4.50/kWh incentive, credited on your next bill.
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {activeTab === "generation" && (
+        <div>
+          <div className="card">
+            <div className="card-title">☀️ 15-Min Generation Profile — Today</div>
+            <SolarProfileChart slots={today.profile} height={180} oeLimit={oeData ? oeData.oe_kw : null} />
+            {oeData && <div style={{fontSize:11,color:"var(--success)",marginTop:4}}>Green dashed line = OE limit ({oeData.oe_kw} kW) — max generation allowed by grid</div>}
+          </div>
+          <div className="card">
+            <div className="card-title">📅 Monthly Generation History</div>
+            <MonthlyBarChart data={monthly_generation} height={160} />
+            <table style={{marginTop:16}}>
+              <thead><tr><th>Month</th><th>Generation (kWh)</th><th>vs Prev Month</th></tr></thead>
+              <tbody>
+                {monthly_generation.map((m,i) => {
+                  const prev = i > 0 ? monthly_generation[i-1].gen_kwh : null;
+                  const pct = prev ? ((m.gen_kwh - prev) / prev * 100).toFixed(1) : null;
+                  return (
+                    <tr key={m.month}>
+                      <td style={{fontWeight:600}}>{m.month}</td>
+                      <td style={{color:"var(--solar)",fontWeight:600}}>{m.gen_kwh} kWh</td>
+                      <td>{pct !== null ? (
+                        <span style={{color: +pct >= 0 ? "var(--success)" : "var(--danger)"}}>
+                          {+pct >= 0 ? "↑" : "↓"} {Math.abs(pct)}%
+                        </span>
+                      ) : "—"}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {activeTab === "billing" && bills && (
+        <div>
+          <div className="card">
+            <div className="card-title">💰 Net Metering Bill Statements</div>
+            <table>
+              <thead>
+                <tr>
+                  <th>Month</th><th>Generated</th><th>Exported</th><th>Imported</th>
+                  <th>Export Credit (₹)</th><th>Import Charge (₹)</th><th>Net Payable (₹)</th><th>Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {bills.bills.map(b => (
+                  <tr key={b.month}>
+                    <td style={{fontWeight:600}}>{b.month}</td>
+                    <td style={{color:"var(--solar)"}}>{b.gen_kwh} kWh</td>
+                    <td style={{color:"var(--success)"}}>{b.export_kwh} kWh</td>
+                    <td style={{color:"var(--grid)"}}>{b.net_import_kwh} kWh</td>
+                    <td style={{color:"var(--success)",fontWeight:600}}>₹{b.export_credit_inr.toFixed(0)}</td>
+                    <td style={{color:"var(--danger)"}}>₹{b.import_charge_inr.toFixed(0)}</td>
+                    <td style={{fontWeight:700,color: b.net_payable_inr <= 0 ? "var(--success)" : "var(--text)"}}>
+                      {b.net_payable_inr <= 0 ? `Credit ₹${Math.abs(b.net_payable_inr).toFixed(0)}` : `₹${b.net_payable_inr.toFixed(0)}`}
+                    </td>
+                    <td>
+                      <span className={`badge ${b.status==="Paid"?"badge-green":"badge-yellow"}`}>{b.status}</span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <div style={{marginTop:14,display:"flex",gap:10,fontSize:12}}>
+              <div style={{background:"var(--bg)",borderRadius:6,padding:"8px 12px"}}>
+                Import tariff: <strong>₹{bills.import_tariff_inr_kwh}/kWh</strong>
+              </div>
+              <div style={{background:"var(--bg)",borderRadius:6,padding:"8px 12px"}}>
+                Export (net metering) credit: <strong style={{color:"var(--success)"}}>₹{bills.credit_tariff_inr_kwh}/kWh</strong>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {activeTab === "oe" && (
+        <div>
+          <OECard derOe={oeData} />
+          <ViolationsTab derId={data.der_id} />
+        </div>
+      )}
+
+      {activeTab === "netmeter" && (
+        <div>
+          <div className="card">
+            <div className="card-title">🔄 Net Metering — How It Works</div>
+            <div style={{display:"flex",gap:0,alignItems:"center",justifyContent:"center",padding:"20px 0",flexWrap:"wrap",gap:16}}>
+              {[
+                { icon: "☀️", label: "Solar Generation", desc: `Your ${data.nameplate_kw}kWp system generates up to ${today.peak_kw}kW` },
+                { icon: "🏠", label: "Self Consumption", desc: "Your household uses solar energy first — reduces import from grid" },
+                { icon: "⚡", label: "Export to Grid", desc: `Surplus exported to PUVVNL grid at ₹${net_metering.tariff_inr_per_kwh}/kWh (NET metered)` },
+                { icon: "💰", label: "Monthly Credit", desc: "Export units credited against import charges on your PUVVNL bill" },
+              ].map((s,i) => (
+                <div key={i} style={{textAlign:"center",width:180,background:"var(--bg)",borderRadius:8,padding:"16px 12px"}}>
+                  <div style={{fontSize:28}}>{s.icon}</div>
+                  <div style={{fontWeight:700,marginTop:8,fontSize:13}}>{s.label}</div>
+                  <div style={{fontSize:11,color:"var(--text-muted)",marginTop:6}}>{s.desc}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+          <div className="card">
+            <div className="card-title">📋 Your Net Metering Details</div>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,fontSize:12}}>
+              {[
+                ["Scheme", net_metering.scheme],
+                ["Billing Cycle", net_metering.billing_cycle],
+                ["Export Tariff", `₹${net_metering.tariff_inr_per_kwh}/kWh`],
+                ["Avg Export %", `~${net_metering.export_pct}% of generation`],
+                ["Total Generation (12M)", `${lifetime.total_gen_kwh.toFixed(0)} kWh`],
+                ["Total Export (12M)", `${lifetime.total_export_kwh.toFixed(0)} kWh`],
+                ["Total Credits Earned", `₹${lifetime.total_credit_inr.toFixed(0)}`],
+                ["Metering Type", data.metering_type],
+              ].map(([k,v]) => (
+                <div key={k} style={{background:"var(--bg)",borderRadius:6,padding:"8px 12px"}}>
+                  <div style={{fontSize:10,color:"var(--text-muted)"}}>{k}</div>
+                  <div style={{fontWeight:600}}>{v}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Root App ──────────────────────────────────────────────────────────────────
+function App() {
+  const [session, setSession] = useState(null);
+  const [bills, setBills] = useState(null);
+
+  const handleLogin = async (consumerId, dashData) => {
+    const b = await apiFetch(`/api/prosumer/${consumerId}/bills`);
+    setBills(b);
+    setSession({ consumerId, data: dashData });
+  };
+
+  if (!session) return <LoginScreen onLogin={handleLogin} />;
+  return <DashboardScreen consumerId={session.consumerId} data={session.data} bills={bills} onLogout={() => setSession(null)} />;
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+</script>
+</body>
+</html>

@@ -3,11 +3,17 @@ API routes for Demand Response management:
   - Power demand analysis vs SLDC schedule
   - Consumer enrollment registry
   - Cost-benefit analysis
+  - CBL (Continuous Baseline Load) engine — 10-of-10 method
+  - MV&S (Measurement, Verification & Settlement)
+  - Event invite / respond lifecycle
 """
 import math
 import random
+import uuid
 from datetime import datetime, timezone, timedelta
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
+from typing import Optional, List
 
 import src.derms.fleet as fleet
 import src.derms.dispatch as dispatch
@@ -399,4 +405,566 @@ async def get_cost_benefit():
             if c["enrolled"] and c["events_participated"] > 0
         ],
         "events": cba_events,
+    }
+
+
+# ---------------------------------------------------------------------------
+# CBL Engine — 10-of-10 method (AEIC/DSMIG standard)
+# In production: queries MDMS 15-min interval data for 10 comparable days
+# ---------------------------------------------------------------------------
+
+def _build_cbl_profile(consumer: dict, event_hour_start: int, event_duration_h: float,
+                       apply_maf: bool = True) -> dict:
+    """
+    Build baseline load profile using 10-of-10 method with Morning Adjustment Factor (MAF).
+
+    MAF = pre_event_demand_today / pre_event_demand_historical
+    Applied multiplicatively to all baseline slots to account for event-day conditions.
+    In production: pre_event_demand_today comes from MDMS 2-hour pre-event window readings.
+    """
+    avg_demand = consumer["avg_demand_kw"]
+    rng = random.Random(hash(consumer["consumer_no"]) & 0xFFFFFFFF)
+
+    # Compute MAF: ratio of event-day morning (2h pre-event) vs historical morning average
+    # Simulated: event-day pre-event is avg × ±12% variability
+    pre_event_hist_kw = avg_demand * (
+        0.40 + 0.35 * math.exp(-0.5 * ((event_hour_start - 2 - 9) ** 2) / 2)
+    )
+    pre_event_today_kw = pre_event_hist_kw * rng.uniform(0.88, 1.12)
+    maf = pre_event_today_kw / pre_event_hist_kw if pre_event_hist_kw > 0 else 1.0
+    # Clamp MAF to ±25% (AEIC standard)
+    maf = max(0.75, min(1.25, maf))
+
+    slots = []
+    for slot_idx in range(int(event_duration_h * 4)):
+        hour_frac = event_hour_start + slot_idx * 0.25
+        base = avg_demand * 0.40
+        morning_peak = avg_demand * 0.35 * math.exp(-0.5 * ((hour_frac - 9) ** 2) / 1.5)
+        evening_peak = avg_demand * 0.50 * math.exp(-0.5 * ((hour_frac - 19.5) ** 2) / 2)
+        load_shape = base + morning_peak + evening_peak
+
+        day_samples = [load_shape * rng.uniform(0.92, 1.08) for _ in range(10)]
+        cbl_kw = sum(day_samples) / len(day_samples)
+        # Apply MAF
+        cbl_kw_adjusted = cbl_kw * maf if apply_maf else cbl_kw
+
+        slots.append({
+            "slot": f"{int(hour_frac):02d}:{int((hour_frac % 1) * 60):02d}",
+            "cbl_kw": round(cbl_kw_adjusted, 2),
+            "cbl_pre_maf_kw": round(cbl_kw, 2),
+            "min_kw": round(min(day_samples) * (maf if apply_maf else 1.0), 2),
+            "max_kw": round(max(day_samples) * (maf if apply_maf else 1.0), 2),
+        })
+
+    total_cbl_kwh = sum(s["cbl_kw"] * 0.25 for s in slots)
+    return {
+        "consumer_no": consumer["consumer_no"],
+        "name": consumer["name"],
+        "method": "10-of-10 (AEIC) + MAF",
+        "comparable_days_used": 10,
+        "maf": round(maf, 4),
+        "pre_event_hist_kw": round(pre_event_hist_kw, 2),
+        "pre_event_today_kw": round(pre_event_today_kw, 2),
+        "event_start_hour": event_hour_start,
+        "event_duration_h": event_duration_h,
+        "cbl_slots": slots,
+        "total_cbl_kwh": round(total_cbl_kwh, 3),
+        "avg_demand_kw": avg_demand,
+    }
+
+
+@router.get("/cbl")
+async def get_cbl(consumer_no: str = None, event_start_hour: int = 17, event_duration_h: float = 2.0):
+    """
+    Calculate CBL (Continuous Baseline Load) using 10-of-10 method.
+    Returns per-slot baseline kW for enrolled consumers.
+    In production: queries MDMS 15-min interval data.
+    """
+    if consumer_no:
+        consumer = next((c for c in _CONSUMERS if c["consumer_no"] == consumer_no), None)
+        if not consumer:
+            raise HTTPException(status_code=404, detail=f"Consumer {consumer_no} not found")
+        return _build_cbl_profile(consumer, event_start_hour, event_duration_h)
+
+    enrolled = [c for c in _CONSUMERS if c["enrolled"]]
+    profiles = [_build_cbl_profile(c, event_start_hour, event_duration_h) for c in enrolled]
+    total_cbl_kw = sum(
+        sum(s["cbl_kw"] for s in p["cbl_slots"]) / len(p["cbl_slots"])
+        for p in profiles
+    )
+    return {
+        "event_start_hour": event_start_hour,
+        "event_duration_h": event_duration_h,
+        "enrolled_consumers": len(enrolled),
+        "aggregate_cbl_kw": round(total_cbl_kw, 1),
+        "aggregate_cbl_kwh": round(sum(p["total_cbl_kwh"] for p in profiles), 3),
+        "profiles": profiles,
+    }
+
+
+# ---------------------------------------------------------------------------
+# DR Event Invitations — consumers Accept/Decline
+# ---------------------------------------------------------------------------
+
+_EVENT_INVITATIONS: dict = {}   # event_id → {consumer_no → {status, ts}}
+
+
+@router.post("/events/{event_id}/invite")
+async def invite_consumers(event_id: str, consumer_nos: List[str] = None):
+    """Send DR event invitations to enrolled consumers (or all enrolled if none specified)."""
+    targets = consumer_nos or [c["consumer_no"] for c in _CONSUMERS if c["enrolled"]]
+    now_iso = datetime.now(timezone.utc).isoformat()
+    _EVENT_INVITATIONS.setdefault(event_id, {})
+    for cno in targets:
+        _EVENT_INVITATIONS[event_id][cno] = {"status": "INVITED", "ts": now_iso}
+    return {
+        "event_id": event_id,
+        "invited": len(targets),
+        "consumer_nos": targets,
+        "invited_at": now_iso,
+    }
+
+
+class EventResponse(BaseModel):
+    consumer_no: str
+    response: str   # "ACCEPTED" | "DECLINED"
+    reason: Optional[str] = None
+
+
+@router.post("/events/{event_id}/respond")
+async def respond_to_event(event_id: str, body: EventResponse):
+    """Consumer accepts or declines a DR event invitation."""
+    if body.response not in ("ACCEPTED", "DECLINED"):
+        raise HTTPException(status_code=400, detail="response must be ACCEPTED or DECLINED")
+    invites = _EVENT_INVITATIONS.get(event_id, {})
+    if body.consumer_no not in invites:
+        # Auto-create invitation record if missing
+        _EVENT_INVITATIONS.setdefault(event_id, {})[body.consumer_no] = {"status": "INVITED", "ts": datetime.now(timezone.utc).isoformat()}
+        invites = _EVENT_INVITATIONS[event_id]
+    invites[body.consumer_no] = {
+        "status": body.response,
+        "ts": datetime.now(timezone.utc).isoformat(),
+        "reason": body.reason,
+    }
+    return {"event_id": event_id, "consumer_no": body.consumer_no, "status": body.response}
+
+
+@router.get("/events/{event_id}/invitations")
+async def get_event_invitations(event_id: str):
+    """Get all consumer invitation responses for a DR event."""
+    invites = _EVENT_INVITATIONS.get(event_id, {})
+    rows = []
+    for cno, inv in invites.items():
+        c = next((x for x in _CONSUMERS if x["consumer_no"] == cno), {})
+        rows.append({
+            "consumer_no": cno,
+            "name": c.get("name", cno),
+            "avg_demand_kw": c.get("avg_demand_kw", 0),
+            "status": inv["status"],
+            "ts": inv["ts"],
+            "reason": inv.get("reason"),
+        })
+    accepted = [r for r in rows if r["status"] == "ACCEPTED"]
+    return {
+        "event_id": event_id,
+        "total_invited": len(rows),
+        "accepted": len(accepted),
+        "declined": len([r for r in rows if r["status"] == "DECLINED"]),
+        "pending": len([r for r in rows if r["status"] == "INVITED"]),
+        "committed_kw": round(sum(r["avg_demand_kw"] * 0.30 for r in accepted), 1),
+        "invitations": rows,
+    }
+
+
+# ---------------------------------------------------------------------------
+# MV&S — Measurement, Verification & Settlement
+# In production: compares smart meter 15-min readings vs CBL
+# ---------------------------------------------------------------------------
+
+_SETTLEMENTS: dict = {}   # event_id → settlement record
+
+# Phase 1: soft launch — settlement rate = ₹0 (PRD §22.3 confirmed decision)
+# Phase 2: incentive rate activated after reviewing Phase 1 curtailment data
+_SETTLEMENT_RATE_INR_PER_KWH = 0.0     # Phase 1: no payment
+_PENALTY_RATE_INR_PER_KWH = 0.0        # Phase 1: no penalty
+
+
+@router.post("/events/{event_id}/settle")
+async def settle_event(event_id: str):
+    """
+    Run MV&S settlement for a completed DR event.
+    Computes: CBL kWh − Actual kWh = Verified Reduction → Settlement ₹
+    In production: pulls actual meter readings from MDMS/AMISP.
+    """
+    invites = _EVENT_INVITATIONS.get(event_id, {})
+    accepted_consumers = [
+        c for c in _CONSUMERS
+        if c["consumer_no"] in invites and invites[c["consumer_no"]]["status"] == "ACCEPTED"
+    ]
+    if not accepted_consumers:
+        accepted_consumers = [c for c in _CONSUMERS if c["enrolled"]]
+
+    event_start_hour = 17
+    event_duration_h = 2.0
+    settlement_rows = []
+    total_verified_kwh = 0.0
+    total_incentive = 0.0
+
+    for c in accepted_consumers:
+        cbl = _build_cbl_profile(c, event_start_hour, event_duration_h)
+        cbl_kwh = cbl["total_cbl_kwh"]
+
+        # Simulate actual: 20-45% reduction from CBL (DR effect)
+        rng = random.Random(hash(c["consumer_no"] + event_id) & 0xFFFFFFFF)
+        reduction_frac = rng.uniform(0.20, 0.45)
+        actual_kwh = round(cbl_kwh * (1 - reduction_frac), 3)
+        verified_kwh = max(0.0, cbl_kwh - actual_kwh)
+        incentive = round(verified_kwh * _SETTLEMENT_RATE_INR_PER_KWH, 2)
+        committed_kwh = cbl_kwh * 0.30
+        shortfall_kwh = max(0.0, committed_kwh - verified_kwh)
+        penalty = round(shortfall_kwh * _PENALTY_RATE_INR_PER_KWH, 2) if shortfall_kwh > 0 else 0.0
+        net_payment = round(incentive - penalty, 2)
+
+        total_verified_kwh += verified_kwh
+        total_incentive += net_payment
+
+        settlement_rows.append({
+            "consumer_no": c["consumer_no"],
+            "name": c["name"],
+            "cbl_kwh": cbl_kwh,
+            "actual_kwh": actual_kwh,
+            "verified_reduction_kwh": round(verified_kwh, 3),
+            "committed_kwh": round(committed_kwh, 3),
+            "shortfall_kwh": round(shortfall_kwh, 3),
+            "incentive_inr": incentive,
+            "penalty_inr": penalty,
+            "net_payment_inr": net_payment,
+            "settlement_status": "SETTLED" if net_payment >= 0 else "PENALTY",
+        })
+
+    settlement = {
+        "event_id": event_id,
+        "settled_at": datetime.now(timezone.utc).isoformat(),
+        "consumers_settled": len(settlement_rows),
+        "total_verified_kwh": round(total_verified_kwh, 3),
+        "total_incentive_inr": round(total_incentive, 2),
+        "cost_avoided_inr": round(total_verified_kwh * _PEAK_TARIFF_RATE, 2),
+        "net_utility_benefit_inr": round(total_verified_kwh * _PEAK_TARIFF_RATE - total_incentive, 2),
+        "settlement_rate_inr_kwh": _SETTLEMENT_RATE_INR_PER_KWH,
+        "rows": settlement_rows,
+    }
+    _SETTLEMENTS[event_id] = settlement
+    return settlement
+
+
+@router.get("/events/{event_id}/settlement")
+async def get_settlement(event_id: str):
+    """Get existing settlement for an event."""
+    s = _SETTLEMENTS.get(event_id)
+    if not s:
+        raise HTTPException(status_code=404, detail=f"No settlement found for event {event_id}. Run POST /settle first.")
+    return s
+
+
+@router.get("/settlements")
+async def list_settlements():
+    """List all computed settlements."""
+    return {"settlements": list(_SETTLEMENTS.values()), "count": len(_SETTLEMENTS)}
+
+
+# ---------------------------------------------------------------------------
+# Extended DR Event Lifecycle — 10 stages (PRD §G)
+# DRAFT → APPROVED → NOTIFIED → COMMITTED → ACTIVE → PAUSED →
+# COMPLETED → VERIFIED → SETTLED → ARCHIVED
+# ---------------------------------------------------------------------------
+
+_LIFECYCLE_TRANSITIONS = {
+    "DRAFT":     ["APPROVED"],
+    "APPROVED":  ["NOTIFIED", "DRAFT"],
+    "NOTIFIED":  ["COMMITTED", "APPROVED"],
+    "COMMITTED": ["ACTIVE", "NOTIFIED"],
+    "ACTIVE":    ["PAUSED", "COMPLETED"],
+    "PAUSED":    ["ACTIVE", "COMPLETED"],
+    "COMPLETED": ["VERIFIED"],
+    "VERIFIED":  ["SETTLED", "COMPLETED"],
+    "SETTLED":   ["ARCHIVED"],
+    "ARCHIVED":  [],
+}
+
+_EVENT_LIFECYCLE: dict = {}   # event_id → {stage, history: [...]}
+
+
+class LifecycleTransition(BaseModel):
+    stage: str
+    user: str = "dr_manager"
+    note: Optional[str] = None
+
+
+@router.get("/events/{event_id}/lifecycle")
+async def get_event_lifecycle(event_id: str):
+    """Get current lifecycle stage and history for a DR event."""
+    lc = _EVENT_LIFECYCLE.get(event_id)
+    if not lc:
+        # Bootstrap from dispatch module if event exists
+        ev = next((e for e in dispatch.get_dr_events() if e["event_id"] == event_id), None)
+        if not ev:
+            raise HTTPException(status_code=404, detail=f"Event {event_id} not found")
+        stage = ev.get("status", "DRAFT").upper()
+        if stage not in _LIFECYCLE_TRANSITIONS:
+            stage = "DRAFT"
+        lc = {
+            "event_id": event_id,
+            "stage": stage,
+            "history": [{"stage": stage, "ts": ev.get("created_at", datetime.now(timezone.utc).isoformat()), "user": "system"}],
+        }
+        _EVENT_LIFECYCLE[event_id] = lc
+    lc["allowed_transitions"] = _LIFECYCLE_TRANSITIONS.get(lc["stage"], [])
+    return lc
+
+
+@router.post("/events/{event_id}/lifecycle")
+async def advance_lifecycle(event_id: str, body: LifecycleTransition):
+    """Advance DR event to the next lifecycle stage."""
+    lc = _EVENT_LIFECYCLE.get(event_id)
+    if not lc:
+        # Auto-create
+        lc = {"event_id": event_id, "stage": "DRAFT", "history": []}
+        _EVENT_LIFECYCLE[event_id] = lc
+
+    current = lc["stage"]
+    allowed = _LIFECYCLE_TRANSITIONS.get(current, [])
+    if body.stage not in allowed:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Cannot transition from {current} → {body.stage}. Allowed: {allowed}"
+        )
+
+    lc["stage"] = body.stage
+    lc["history"].append({
+        "stage": body.stage,
+        "ts": datetime.now(timezone.utc).isoformat(),
+        "user": body.user,
+        "note": body.note,
+    })
+    lc["allowed_transitions"] = _LIFECYCLE_TRANSITIONS.get(body.stage, [])
+    return lc
+
+
+# ---------------------------------------------------------------------------
+# SLDC Day-Ahead Schedule (PRD §17.4 — manual CSV upload in Phase 1)
+# ---------------------------------------------------------------------------
+
+_SLDC_SCHEDULE: list = []   # list of 48-block records
+_SLDC_UPLOADED_AT: Optional[str] = None
+_SLDC_UPLOADED_BY: Optional[str] = None
+
+
+class SLDCBlock(BaseModel):
+    date: str
+    block_number: int        # 1–48
+    available_supply_mw: float
+    scheduled_demand_mw: float
+    shortfall_mw: float = 0.0
+
+
+class SLDCUpload(BaseModel):
+    date: str
+    uploaded_by: str = "dr_manager"
+    blocks: List[SLDCBlock]
+
+
+@router.post("/sldc-schedule")
+async def upload_sldc_schedule(body: SLDCUpload):
+    """Manual upload of SLDC day-ahead 48-block schedule by DR Manager."""
+    global _SLDC_SCHEDULE, _SLDC_UPLOADED_AT, _SLDC_UPLOADED_BY
+
+    if not body.blocks:
+        raise HTTPException(status_code=400, detail="No blocks provided")
+
+    blocks = sorted([b.dict() for b in body.blocks], key=lambda x: x["block_number"])
+    # Compute shortfall where not provided
+    for b in blocks:
+        if b["shortfall_mw"] == 0:
+            b["shortfall_mw"] = round(max(0, b["scheduled_demand_mw"] - b["available_supply_mw"]), 3)
+
+    _SLDC_SCHEDULE = blocks
+    _SLDC_UPLOADED_AT = datetime.now(timezone.utc).isoformat()
+    _SLDC_UPLOADED_BY = body.uploaded_by
+
+    shortfall_blocks = [b for b in blocks if b["shortfall_mw"] > 0]
+    total_shortfall_mwh = sum(b["shortfall_mw"] * 0.5 for b in shortfall_blocks)
+
+    # Auto-alert if shortfall blocks exist
+    if shortfall_blocks:
+        import src.derms.fleet as fleet
+        fleet.add_alert(
+            "warning", "MEDIUM",
+            f"A-15 SLDC schedule uploaded for {body.date}: "
+            f"{len(shortfall_blocks)} blocks with shortfall, "
+            f"total {total_shortfall_mwh:.1f} MWh deficit — DR event may be needed",
+            "demand-response"
+        )
+
+    return {
+        "status": "uploaded",
+        "date": body.date,
+        "blocks_uploaded": len(blocks),
+        "shortfall_blocks": len(shortfall_blocks),
+        "total_shortfall_mwh": round(total_shortfall_mwh, 3),
+        "uploaded_by": body.uploaded_by,
+        "uploaded_at": _SLDC_UPLOADED_AT,
+    }
+
+
+@router.get("/sldc-schedule")
+async def get_sldc_schedule():
+    """Get current SLDC day-ahead schedule."""
+    if not _SLDC_SCHEDULE:
+        # Return simulated schedule for demo
+        now = datetime.now(timezone.utc)
+        demo_date = (now + timedelta(days=1)).strftime("%Y-%m-%d")
+        blocks = []
+        for b in range(1, 49):
+            hour = (b - 1) * 0.5
+            demand = 2.8 + 0.8 * math.exp(-0.5 * ((hour - 9) ** 2) / 4) + \
+                     1.2 * math.exp(-0.5 * ((hour - 18.5) ** 2) / 3)
+            avail = demand * (random.uniform(0.88, 0.97) if 17 <= hour <= 22 else random.uniform(0.95, 1.05))
+            shortfall = round(max(0, demand - avail), 3)
+            blocks.append({
+                "date": demo_date, "block_number": b,
+                "available_supply_mw": round(avail, 3),
+                "scheduled_demand_mw": round(demand, 3),
+                "shortfall_mw": shortfall,
+            })
+        return {
+            "date": demo_date,
+            "blocks": blocks,
+            "source": "simulated (no upload yet)",
+            "shortfall_blocks": sum(1 for b in blocks if b["shortfall_mw"] > 0),
+        }
+
+    return {
+        "date": _SLDC_SCHEDULE[0]["date"] if _SLDC_SCHEDULE else None,
+        "blocks": _SLDC_SCHEDULE,
+        "uploaded_at": _SLDC_UPLOADED_AT,
+        "uploaded_by": _SLDC_UPLOADED_BY,
+        "shortfall_blocks": sum(1 for b in _SLDC_SCHEDULE if b["shortfall_mw"] > 0),
+        "source": "manual_upload",
+    }
+
+
+# ---------------------------------------------------------------------------
+# Live Event Monitoring — Stage 7 of DR lifecycle
+# Real-time curtailment gauge during active event
+# ---------------------------------------------------------------------------
+
+@router.get("/events/{event_id}/monitor")
+async def live_event_monitor(event_id: str):
+    """
+    Live monitoring dashboard for an active DR event (PRD Stage 7).
+    Shows real-time curtailment vs CBL, per-consumer status.
+    In production: pulls live smart meter 15-min readings from MDMS.
+    """
+    invites = _EVENT_INVITATIONS.get(event_id, {})
+    accepted = [
+        c for c in _CONSUMERS
+        if c["consumer_no"] in invites and invites[c["consumer_no"]]["status"] == "ACCEPTED"
+    ]
+    if not accepted:
+        accepted = [c for c in _CONSUMERS if c["enrolled"]]
+
+    event_start_hour = 17
+    now = datetime.now(timezone.utc)
+    hour_ist = (now.hour + 5.5) % 24
+    elapsed_min = max(0, (hour_ist - event_start_hour) * 60)
+    elapsed_slots = int(elapsed_min / 15)
+
+    rng_seed = hash(event_id + now.strftime("%Y%m%d%H")) & 0xFFFFFFFF
+    rng = random.Random(rng_seed)
+
+    consumer_status = []
+    total_cbl_kw = 0
+    total_actual_kw = 0
+
+    for c in accepted:
+        cbl_profile = _build_cbl_profile(c, event_start_hour, 2.0)
+        slots_so_far = cbl_profile["cbl_slots"][:max(1, elapsed_slots)]
+        current_cbl = slots_so_far[-1]["cbl_kw"] if slots_so_far else c["avg_demand_kw"]
+        actual_kw = current_cbl * rng.uniform(0.55, 0.75)  # 25-45% reduction
+
+        curtailed_kw = current_cbl - actual_kw
+        curtailment_pct = curtailed_kw / current_cbl * 100 if current_cbl > 0 else 0
+        committed_kw = current_cbl * 0.30
+        on_track = curtailed_kw >= committed_kw * 0.90
+
+        total_cbl_kw += current_cbl
+        total_actual_kw += actual_kw
+
+        consumer_status.append({
+            "consumer_no": c["consumer_no"],
+            "name": c["name"],
+            "current_cbl_kw": round(current_cbl, 2),
+            "current_actual_kw": round(actual_kw, 2),
+            "curtailed_kw": round(curtailed_kw, 2),
+            "curtailment_pct": round(curtailment_pct, 1),
+            "committed_kw": round(committed_kw, 2),
+            "on_track": on_track,
+            "status": "ON_TRACK" if on_track else "UNDER_DELIVERING",
+        })
+
+    total_curtailed = total_cbl_kw - total_actual_kw
+    aggregate_curtailment_pct = total_curtailed / total_cbl_kw * 100 if total_cbl_kw > 0 else 0
+
+    return {
+        "event_id": event_id,
+        "event_start_hour": event_start_hour,
+        "elapsed_min": round(elapsed_min, 0),
+        "elapsed_slots": elapsed_slots,
+        "monitoring_ts": now.isoformat(),
+        "aggregate": {
+            "total_cbl_kw": round(total_cbl_kw, 2),
+            "total_actual_kw": round(total_actual_kw, 2),
+            "total_curtailed_kw": round(total_curtailed, 2),
+            "curtailment_pct": round(aggregate_curtailment_pct, 1),
+            "consumers_on_track": sum(1 for c in consumer_status if c["on_track"]),
+            "consumers_total": len(consumer_status),
+        },
+        "consumers": consumer_status,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Alert Catalogue — PRD A-01 through A-15
+# ---------------------------------------------------------------------------
+
+ALERT_CATALOGUE = [
+    {"code": "A-01", "priority": "P1", "category": "Voltage", "description": "Voltage > 1.06 pu at any DT (CEA limit breach)", "channel": ["SMS", "in-app"]},
+    {"code": "A-02", "priority": "P1", "category": "Voltage", "description": "Voltage < 0.94 pu at any DT (CEA limit breach)", "channel": ["SMS", "in-app"]},
+    {"code": "A-03", "priority": "P2", "category": "RPF", "description": "Reverse Power Flow detected — DT exporting > 10% of rated capacity", "channel": ["in-app", "email"]},
+    {"code": "A-04", "priority": "P1", "category": "Thermal", "description": "DT loading > 90% nameplate kVA", "channel": ["SMS", "in-app"]},
+    {"code": "A-05", "priority": "P2", "category": "Thermal", "description": "DT loading 75–90% nameplate kVA (pre-alert)", "channel": ["in-app"]},
+    {"code": "A-06", "priority": "P2", "category": "OE", "description": "Prosumer generating > OE limit for > 2 consecutive blocks", "channel": ["in-app", "WhatsApp to prosumer"]},
+    {"code": "A-07", "priority": "P3", "category": "HC", "description": "HC utilisation > 80% on any DT (approaching limit)", "channel": ["in-app"]},
+    {"code": "A-08", "priority": "P1", "category": "IoT", "description": "IoT gateway offline > 5 minutes (heartbeat timeout)", "channel": ["SMS", "in-app"]},
+    {"code": "A-09", "priority": "P2", "category": "DER", "description": "DER zero output during daylight > 1 hour (fault / disconnect?)", "channel": ["in-app", "email"]},
+    {"code": "A-10", "priority": "P2", "category": "CBL", "description": "CBL data missing for enrolled DR consumer (< 5 valid baseline days)", "channel": ["email"]},
+    {"code": "A-11", "priority": "P3", "category": "Forecast", "description": "Actual generation deviates > 25% from D+1 forecast", "channel": ["in-app"]},
+    {"code": "A-12", "priority": "P2", "category": "MDMS", "description": "DT meter data stale > 90 minutes (MDMS pipeline issue)", "channel": ["in-app", "email"]},
+    {"code": "A-13", "priority": "P1", "category": "Outage", "description": "Grid outage — all DTs on feeder reporting offline simultaneously", "channel": ["SMS", "in-app"]},
+    {"code": "A-14", "priority": "P3", "category": "DER", "description": "New prosumer connection request submitted via portal", "channel": ["in-app"]},
+    {"code": "A-15", "priority": "P2", "category": "SLDC", "description": "SLDC day-ahead schedule received / manual upload confirmed", "channel": ["in-app"]},
+]
+
+
+@router.get("/alert-catalogue")
+async def get_alert_catalogue():
+    """PRD-defined 15-alert catalogue with priority and channel routing."""
+    return {
+        "total": len(ALERT_CATALOGUE),
+        "catalogue": ALERT_CATALOGUE,
+        "escalation_policy": {
+            "P1_unacknowledged_15min": "Auto-SMS to Grid Operator Supervisor",
+            "P1_unacknowledged_60min": "Auto-email to PuVVNL Nodal Officer",
+            "P2_unacknowledged_60min": "Reminder in-app notification",
+        },
     }

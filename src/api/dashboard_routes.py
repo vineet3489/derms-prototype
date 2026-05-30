@@ -2,7 +2,8 @@
 import math
 import random
 from datetime import datetime, timezone, timedelta
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
 import src.derms.fleet as fleet
 
 router = APIRouter(prefix="/api/dashboard", tags=["Dashboard"])
@@ -75,6 +76,45 @@ async def get_generation_profile(hours: int = 24):
 async def get_alerts(limit: int = 50, unresolved_only: bool = False):
     """Get system alerts."""
     return {"alerts": fleet.get_alerts(limit, unresolved_only)}
+
+
+class AlertAction(BaseModel):
+    action: str   # "acknowledge" | "resolve"
+    user: str = "operator"
+
+
+@router.patch("/alerts/{alert_id}")
+async def update_alert(alert_id: str, body: AlertAction):
+    """Transition alert state: OPEN → ACKNOWLEDGED → RESOLVED."""
+    if body.action == "acknowledge":
+        alert = fleet.acknowledge_alert(alert_id, body.user)
+    elif body.action == "resolve":
+        alert = fleet.resolve_alert(alert_id, body.user)
+    else:
+        raise HTTPException(status_code=400, detail="action must be 'acknowledge' or 'resolve'")
+    if not alert:
+        raise HTTPException(status_code=404, detail=f"Alert {alert_id} not found")
+    return {"status": "ok", "alert": alert}
+
+
+@router.post("/alerts/seed-demo")
+async def seed_demo_alerts():
+    """Seed demo alerts covering all PRD alert categories (A-01 through A-15)."""
+    alerts = [
+        ("warning",  "HIGH",   "A-01 Voltage: LK1-DT-05 (Rasmi Nagar) at 1.058 pu — approaching CEA upper limit (1.06 pu)", "voltage-monitoring", "LK1-DT-05", "DT"),
+        ("critical", "HIGH",   "A-04 Thermal: LK1-DT-02 (Madhav Market) loaded at 92% — above 90% nameplate threshold", "thermal-monitoring", "LK1-DT-02", "DT"),
+        ("warning",  "HIGH",   "A-03 RPF: LK1-DT-05 (Rasmi Nagar) exporting 8.2 kW — DER gen 54 kW > load 46 kW", "oe-engine", "LK1-DT-05", "DT"),
+        ("warning",  "MEDIUM", "A-06 OE Exceedance: LK1-DER-004 generating 52.1 kW, OE limit 48.3 kW (+3.8 kW excess)", "oe-engine", "LK1-DER-004", "DER"),
+        ("warning",  "MEDIUM", "A-05 Thermal Pre-Alert: LK1-DT-08 (Sanketmochan) at 79% loading — approaching 75% warning threshold", "thermal-monitoring", "LK1-DT-08", "DT"),
+        ("critical", "HIGH",   "A-09 DER Anomaly: LK1-DER-004 (50kW) reporting zero output at 13:00 IST during peak solar hours", "der-monitoring", "LK1-DER-004", "DER"),
+        ("info",     "LOW",    "A-07 HC: LK1-DT-05 (Rasmi Nagar) hosting capacity utilised at 28% (54 kWp / 190 kW HC)", "load-flow", "LK1-DT-05", "DT"),
+        ("info",     "LOW",    "A-11 Forecast: Fleet generation 18% below D+1 forecast (cloud cover event 11:00–14:00 IST)", "forecast", "LK1", "Feeder"),
+        ("warning",  "MEDIUM", "A-15 SLDC: Day-ahead schedule uploaded — 6 blocks with shortfall 17:00–20:00 IST, DR event recommended", "demand-response", None, None),
+        ("info",     "LOW",    "pandapower BFS load flow completed in 0.09s — all 8 DTs within CEA voltage limits", "load-flow", "LK1", "Feeder"),
+    ]
+    for args in alerts:
+        fleet.add_alert(*args)
+    return {"status": "seeded", "count": len(alerts)}
 
 
 @router.get("/hosting-capacity")
@@ -160,6 +200,91 @@ async def get_aggregators():
             "last_seen": agg_info.get("last_seen", "Unknown"),
         })
     return {"aggregators": result}
+
+
+@router.get("/dt/{dt_id}")
+async def get_dt_drilldown(dt_id: str):
+    """
+    Per-DT drill-down: combines voltage, thermal, OE, DER list, and load flow results.
+    """
+    from src.loadflow.engine import get_latest_results
+    from src.loadflow.oe_engine import get_oe_by_dt, get_oe_schedule
+    from src.data.real_pilot_data import LANKA_DTS
+
+    dts = fleet.get_all_dts()
+    dt = next((d for d in dts if d["dt_id"] == dt_id), None)
+    if not dt:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail=f"DT {dt_id} not found")
+
+    # Enrich with LANKA_DTS data
+    lk1_meta = next((d for d in LANKA_DTS if d["id"] == dt_id), {})
+    dt = {**dt, **{k: v for k, v in lk1_meta.items() if k not in dt or not dt[k]}}
+
+    # DERs on this DT
+    all_ders = fleet.get_all_ders()
+    ders_on_dt = [d for d in all_ders if d.get("dt_id") == dt_id]
+
+    # Load flow results
+    lf = get_latest_results("LK1")
+    lf_voltage = None
+    lf_loading = None
+    doc_for_dt = []
+    if lf:
+        lf_voltage = next((bv for bv in lf.get("bus_voltages", []) if bv["dt_id"] == dt_id), None)
+        lf_loading = lf.get("dt_loading_pct", {}).get(dt_id)
+        doc_for_dt = [d for d in lf.get("doc_per_der", []) if d["dt_id"] == dt_id]
+
+    # OE data
+    oe = get_oe_by_dt(dt_id)
+    oe_schedule = get_oe_schedule(dt_id)
+
+    # 24-slot OE chart data for UI
+    chart_blocks = []
+    if oe_schedule:
+        # Downsample 48 → 24 blocks for chart readability
+        for i in range(0, 48, 2):
+            b1 = oe_schedule[i] if i < len(oe_schedule) else {}
+            b2 = oe_schedule[i+1] if i+1 < len(oe_schedule) else b1
+            total_oe = sum(d["oe_kw"] for d in b1.get("ders", []))
+            total_gen = b1.get("forecast_gen_kw", 0)
+            chart_blocks.append({
+                "time": b1.get("time", ""),
+                "oe_kw": round(total_oe, 2),
+                "forecast_kw": round(total_gen, 2),
+                "consumer_load_kw": round(b1.get("consumer_load_kw", 0), 2),
+                "rpf_forecast": b1.get("rpf_forecast", False),
+            })
+
+    # Hosting capacity
+    rated_kva = dt.get("rated_kva", 100)
+    total_der_kw = sum(d.get("nameplate_kw", 0) for d in ders_on_dt)
+    hc_kw = rated_kva * 0.95 * 0.80
+    hc_used_pct = round(total_der_kw / hc_kw * 100, 1) if hc_kw > 0 else 0
+
+    return {
+        "dt": dt,
+        "rated_kva": rated_kva,
+        "consumer_count": lk1_meta.get("consumer_count", "?"),
+        "ders": ders_on_dt,
+        "der_count": len(ders_on_dt),
+        "total_der_nameplate_kw": round(total_der_kw, 2),
+        "total_der_generation_kw": round(sum(d.get("current_kw", 0) for d in ders_on_dt), 2),
+        "loadflow": {
+            "voltage": lf_voltage,
+            "loading_pct": lf_loading,
+            "doc": doc_for_dt,
+            "run_ts": lf.get("timestamp") if lf else None,
+        },
+        "oe": oe,
+        "hosting_capacity": {
+            "hc_kw": round(hc_kw, 1),
+            "used_kw": round(total_der_kw, 1),
+            "used_pct": hc_used_pct,
+            "traffic_light": "red" if hc_used_pct > 85 else "amber" if hc_used_pct > 60 else "green",
+        },
+        "oe_chart_24h": chart_blocks,
+    }
 
 
 @router.get("/p2p-transactions")

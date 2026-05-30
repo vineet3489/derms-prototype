@@ -8,10 +8,14 @@ class Settings(BaseSettings):
     app_name: str = "DERMS Prototype"
     host: str = "0.0.0.0"
     port: int = int(os.environ.get("PORT", 8080))
-    debug: bool = True
+    debug: bool = False
 
-    # Database
-    db_url: str = "sqlite+aiosqlite:///./derms.db"
+    # Database — use /data volume mount in production (Fly.io), fallback to local
+    db_url: str = (
+        "sqlite+aiosqlite:////data/derms.db"
+        if os.path.isdir("/data")
+        else "sqlite+aiosqlite:///./derms.db"
+    )
 
     # Simulation
     adms_poll_interval: int = 30       # seconds between ADMS state updates
