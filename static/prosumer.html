@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>DERMS — Prosumer Self-Service Portal</title>
+<title>Neural Grid Platform — Prosumer Portal · PuVVNL</title>
 <script src="https://unpkg.com/react@18.2.0/umd/react.production.min.js"></script>
 <script src="https://unpkg.com/react-dom@18.2.0/umd/react-dom.production.min.js"></script>
 <script src="https://unpkg.com/@babel/standalone@7.23.6/babel.min.js"></script>
@@ -24,7 +24,7 @@ body { background: var(--bg); color: var(--text); font-family: 'Segoe UI', sans-
 .subtitle { font-size: 13px; color: var(--text-muted); margin-top: 4px; }
 .card { background: var(--bg-card); border: 1px solid var(--border); border-radius: 10px; padding: 20px; margin-bottom: 16px; }
 .card-title { font-size: 12px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 14px; }
-.kpi-grid { display: grid; grid-template-columns: repeat(3,1fr); gap: 12px; margin-bottom: 16px; }
+.kpi-grid { display: grid; grid-template-columns: repeat(4,1fr); gap: 12px; margin-bottom: 16px; }
 .kpi-card { background: var(--bg-card); border: 1px solid var(--border); border-radius: 10px; padding: 14px; }
 .kpi-label { font-size: 11px; color: var(--text-muted); text-transform: uppercase; }
 .kpi-value { font-size: 24px; font-weight: 700; margin: 4px 0; }
@@ -102,8 +102,8 @@ function LoginScreen({ onLogin }) {
     <div className="app">
       <div className="header">
         <div className="logo">☀️</div>
-        <div className="title">Prosumer Self-Service Portal</div>
-        <div className="subtitle">Varanasi Pilot — PUVVNL / L&T DERMS</div>
+        <div className="title">Neural Grid Platform</div>
+        <div className="subtitle">Prosumer Portal · PuVVNL Varanasi Pilot · L&T DERMS</div>
       </div>
       <div className="login-box">
         <div className="card">
@@ -127,7 +127,7 @@ function LoginScreen({ onLogin }) {
           {error && <div style={{color:"var(--danger)",fontSize:12,marginTop:10,textAlign:"center"}}>{error}</div>}
         </div>
         <div style={{textAlign:"center",fontSize:11,color:"var(--text-muted)",marginTop:12}}>
-          L&T DES · DERMS Prototype · <a href="/ui" style={{color:"var(--accent)"}}>Operator Dashboard →</a>
+          L&T Neural Grid Platform · Phase 1 · <a href="/ui" style={{color:"var(--accent)"}}>Operator Dashboard →</a>
         </div>
       </div>
     </div>
@@ -327,17 +327,30 @@ function DashboardScreen({ consumerId, data, bills, onLogout }) {
     });
   }, [data.dt_id, data.der_id]);
 
+  // Performance ratio (PRD J.1): actual ÷ irradiance-expected × 100%
+  const prPct = data.pr_pct || (today.peak_kw > 0 ? Math.round((today.gen_kwh / (data.nameplate_kw * 5)) * 100) : 0);
+  const prLow = prPct < 50;
+
+  // Net export label per PRD J.1: NET metered → "Net export today", GROSS → "Generation today"
+  const exportLabel = data.metering_type === "GROSS" ? "Generation Today" : "Net Export Today";
+
   return (
     <div className="app">
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
+      {/* Program header per PRD J.1 */}
+      <div style={{ background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: 10, padding: "12px 18px", marginBottom: 16, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
         <div>
-          <div style={{ fontSize: 18, fontWeight: 700, color: "var(--accent)" }}>☀️ My Solar Dashboard</div>
-          <div style={{ fontSize: 12, color: "var(--text-muted)" }}>Consumer: {consumerId} · Meter: {data.meter_id} · {data.nameplate_kw} kWp system</div>
+          <div style={{ fontSize: 11, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.04em" }}>Programme</div>
+          <div style={{ fontSize: 16, fontWeight: 700, color: "var(--accent)" }}>Varanasi Voltage Pilot 2026</div>
+          <div style={{ fontSize: 11, color: "var(--text-muted)" }}>PuVVNL · L&T Neural Grid Platform · Enrolled: {data.commission_date || "Jan 2026"}</div>
         </div>
-        <button onClick={onLogout}
-          style={{ background: "transparent", border: "1px solid var(--border)", color: "var(--text-muted)", padding: "6px 14px", borderRadius: 6, cursor: "pointer", fontSize: 12 }}>
-          Sign Out
-        </button>
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          <span style={{ padding: "3px 12px", borderRadius: 12, background: "rgba(16,185,129,0.15)", color: "var(--success)", border: "1px solid rgba(16,185,129,0.3)", fontSize: 11, fontWeight: 700 }}>ENROLLED</span>
+          <button onClick={onLogout} style={{ background: "transparent", border: "1px solid var(--border)", color: "var(--text-muted)", padding: "5px 12px", borderRadius: 6, cursor: "pointer", fontSize: 12 }}>Sign Out</button>
+        </div>
+      </div>
+
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+        <div style={{ fontSize: 12, color: "var(--text-muted)" }}>Consumer: {consumerId} · Meter: {data.meter_id} · {data.nameplate_kw} kWp system · DT: {data.dt_id}</div>
       </div>
 
       <div className="status-bar">
@@ -345,20 +358,20 @@ function DashboardScreen({ consumerId, data, bills, onLogout }) {
           <span style={{ width: 10, height: 10, borderRadius: "50%", background: statusColor, display: "inline-block" }}></span>
           <span style={{ fontWeight: 600 }}>{data.status}</span>
           <span style={{ color: "var(--solar)", fontWeight: 600, marginLeft: 8 }}>
-            Now: {(data.current_kw || 0).toFixed(1)} kW generating
+            Now: {(data.current_kw || 0).toFixed(1)} kW {data.metering_type === "GROSS" ? "generating" : "net export"}
           </span>
+          {prLow && <span style={{ background: "rgba(245,158,11,0.15)", color: "var(--warning)", border: "1px solid rgba(245,158,11,0.3)", borderRadius: 6, padding: "2px 10px", fontSize: 11 }}>⚠ System may be underperforming</span>}
         </div>
         <div className="stat-row">
-          <span className="stat-pill">DT: {data.dt_id}</span>
+          <span className="stat-pill">{data.metering_type} metered</span>
           <span className="stat-pill">Feeder: {data.feeder_id}</span>
           <span className="stat-pill">Commissioned: {data.commission_date || "—"}</span>
-          <span className="stat-pill">{data.metering_type} metering</span>
         </div>
       </div>
 
       <div className="kpi-grid">
         <div className="kpi-card">
-          <div className="kpi-label">Today's Generation</div>
+          <div className="kpi-label">{exportLabel}</div>
           <div className="kpi-value" style={{color:"var(--solar)"}}>{today.gen_kwh}<span style={{fontSize:14,color:"var(--text-muted)",marginLeft:4}}>kWh</span></div>
           <div className="kpi-sub">Peak: {today.peak_kw} kW</div>
         </div>
@@ -366,6 +379,11 @@ function DashboardScreen({ consumerId, data, bills, onLogout }) {
           <div className="kpi-label">This Month</div>
           <div className="kpi-value" style={{color:"var(--success)"}}>{this_month.gen_kwh}<span style={{fontSize:14,color:"var(--text-muted)",marginLeft:4}}>kWh</span></div>
           <div className="kpi-sub">Export: {this_month.export_kwh} kWh · Credit: ₹{this_month.net_credit_inr.toFixed(0)}</div>
+        </div>
+        <div className="kpi-card" style={{borderColor: prLow ? "var(--warning)" : "var(--border)"}}>
+          <div className="kpi-label">Performance Ratio</div>
+          <div className="kpi-value" style={{color: prLow ? "var(--warning)" : "var(--success)"}}>{prPct}<span style={{fontSize:14,color:"var(--text-muted)",marginLeft:2}}>%</span></div>
+          <div className="kpi-sub">{prLow ? "⚠ Below 50% — check system" : "Actual ÷ irradiance-expected"}</div>
         </div>
         <div className="kpi-card">
           <div className="kpi-label">Total Earnings</div>

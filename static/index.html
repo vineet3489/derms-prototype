@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>DERMS Prototype — Varanasi Pilot</title>
+<title>Neural Grid Platform · L&T — DERMS Varanasi</title>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="https://unpkg.com/react@18.2.0/umd/react.production.min.js"></script>
@@ -568,12 +568,13 @@ function DashboardScreen({ summary, genProfile, ders }) {
     <div>
       {dtDrilldown && <DTDrilldownModal dtId={dtDrilldown} onClose={() => setDtDrilldown(null)} />}
 
+      {/* KPI strip — per PRD G.1 */}
       <div className="kpi-grid">
-        <KpiCard label="Total Generation" value={(total_generation_kw || 0).toFixed(1)} unit="kW" sub={`of ${(total_capacity_kw || 0).toFixed(0)} kW installed`} color="var(--solar)" icon="☀️" />
-        <KpiCard label="DERs Online" value={online_ders || 0} sub={`${offline_ders || 0} offline · ${curtailed_ders || 0} curtailed`} color="var(--success)" icon="⚡" />
-        <KpiCard label="System CUF" value={cuf_display.toFixed(1)} unit="%" sub="Capacity Utilization Factor" color="var(--cyan)" icon="📊" />
-        <KpiCard label="Active Alerts" value={active_alerts || 0} sub={`click Alerts tab for details`} color={(active_alerts || 0) > 0 ? "var(--danger)" : "var(--success)"} icon="🔔" />
-        {oeSummary && <KpiCard label="RPF Events" value={oeSummary.rpf_dts || 0} sub={`${oeSummary.ders_exceeding_oe || 0} DERs exceeding OE`} color={oeSummary.rpf_dts > 0 ? "var(--danger)" : "var(--success)"} icon="↩️" />}
+        <KpiCard label="DERs Registered / Active" value={`${total_ders || 0} / ${online_ders || 0}`} sub={`${offline_ders || 0} offline · ${curtailed_ders || 0} curtailed`} color="var(--success)" icon="⚡" />
+        <KpiCard label="Net DT Export" value={(total_generation_kw || 0).toFixed(1)} unit="kW" sub="Aggregate across pilot feeders" color="var(--solar)" icon="☀️" />
+        <KpiCard label="DTs with P1 Alerts" value={oeSummary ? oeSummary.rpf_dts + (oeSummary.oe_exceeding_dts || 0) : 0} sub="Voltage / overload violations" color={(oeSummary?.rpf_dts || 0) > 0 ? "var(--danger)" : "var(--success)"} icon="🏗️" />
+        <KpiCard label="HC Red DTs" value={(distribution_transformers || []).filter(dt => ((dt.total_der_kw || 0) / ((dt.rated_kva || 100) * 0.95 * 0.80)) > 0.85).length} sub="HC utilised > 85%" color="var(--danger)" icon="🔴" />
+        <KpiCard label="Open P1 Alerts" value={(recent_alerts || []).filter(a => !a.resolved && a.priority === "HIGH").length} sub="Unresolved HIGH priority" color={(recent_alerts || []).filter(a => !a.resolved && a.priority === "HIGH").length > 0 ? "var(--danger)" : "var(--success)"} icon="🔔" />
       </div>
 
       {/* OE status banner if issues */}
@@ -647,11 +648,12 @@ function DERFleetScreen({ ders }) {
 
   return (
     <div>
-      <div className="kpi-grid" style={{ gridTemplateColumns: "repeat(4,1fr)" }}>
-        <KpiCard label="Registered DERs" value={filtered.length} sub={`${ders?.length} total`} icon="🔋" />
-        <KpiCard label="Online" value={filtered.filter(d => d.status === "Online").length} color="var(--success)" icon="✅" />
-        <KpiCard label="Generation" value={totalGen.toFixed(1)} unit="kW" sub={`of ${totalCap.toFixed(0)}kW capacity`} color="var(--solar)" icon="☀️" />
-        <KpiCard label="Avg Performance Ratio" value={avgPR.toFixed(1)} unit="%" color="var(--cyan)" icon="📊" />
+      <div className="kpi-grid" style={{ gridTemplateColumns: "repeat(5,1fr)" }}>
+        <KpiCard label="Registered" value={filtered.length} sub="DRAFT+PENDING+ACTIVE" icon="🔋" />
+        <KpiCard label="Active" value={filtered.filter(d => d.status === "Online" || d.lifecycle_status === "ACTIVE").length} color="var(--success)" icon="✅" sub="Confirmed grid-connected" />
+        <KpiCard label="Pending Approval" value={filtered.filter(d => d.lifecycle_status === "PENDING_APPROVAL" || d.status === "Pending").length} color="var(--warning)" icon="⏳" sub="HC pre-check done" />
+        <KpiCard label="Generation Now" value={totalGen.toFixed(1)} unit="kW" sub={`of ${totalCap.toFixed(0)}kW installed`} color="var(--solar)" icon="☀️" />
+        <KpiCard label="Avg PR" value={avgPR.toFixed(1)} unit="%" color="var(--cyan)" icon="📊" sub="Performance Ratio" />
       </div>
 
       <div style={{ display: "flex", gap: 12, marginBottom: 12, flexWrap: "wrap" }}>
@@ -674,23 +676,28 @@ function DERFleetScreen({ ders }) {
           {view === "table" ? (
             <table>
               <thead><tr>
-                <th>DER ID</th><th>Type</th><th>Location</th><th>OEM</th>
-                <th>Capacity</th><th>Now</th><th>CUF%</th><th>Feeder</th><th>Status</th>
+                <th>DER ID</th><th>Type</th><th>Location</th><th>Capacity</th>
+                <th>Metering</th><th>Now (kW)</th><th>CUF%</th><th>DT</th><th>Lifecycle</th><th>Status</th>
               </tr></thead>
               <tbody>
-                {filtered.map(d => (
+                {filtered.map(d => {
+                  const lcStatus = d.lifecycle_status || (d.status === "Online" ? "ACTIVE" : d.status === "Pending" ? "PENDING_APPROVAL" : "ACTIVE");
+                  const lcColor = { ACTIVE: "var(--success)", PENDING_APPROVAL: "var(--warning)", DRAFT: "var(--text-muted)", SUSPENDED: "var(--danger)", DECOMMISSIONED: "var(--text-muted)" }[lcStatus] || "var(--text-muted)";
+                  return (
                   <tr key={d.der_id} onClick={() => setSelected(selected?.der_id === d.der_id ? null : d)} style={{ cursor: "pointer", background: selected?.der_id === d.der_id ? "var(--bg-hover)" : "" }}>
                     <td style={{ fontSize: 11, fontFamily: "monospace" }}>{d.der_id}</td>
                     <td><span className="tag">{d.der_type}</span></td>
                     <td style={{ fontSize: 11 }}>{d.location_name}</td>
-                    <td style={{ fontSize: 11 }}>{d.inverter_oem}</td>
                     <td>{d.nameplate_kw}kW</td>
-                    <td style={{ color: "var(--solar)", fontWeight: 600 }}>{(d.current_kw || 0).toFixed(1)}kW</td>
+                    <td><span style={{ fontSize: 10, padding: "2px 6px", borderRadius: 4, background: "rgba(16,185,129,0.1)", color: "var(--success)", border: "1px solid rgba(16,185,129,0.3)" }}>{d.metering_type || "NET"}</span></td>
+                    <td style={{ color: "var(--solar)", fontWeight: 600 }}>{(d.current_kw || 0).toFixed(1)}</td>
                     <td>{(d.cuf_pct || 0).toFixed(1)}%</td>
-                    <td><span style={{ fontSize: 10, color: "var(--cyan)" }}>{d.feeder_id}</span></td>
+                    <td style={{ fontSize: 10, color: "var(--cyan)" }}>{d.dt_id}</td>
+                    <td><span style={{ fontSize: 10, fontWeight: 700, color: lcColor }}>{lcStatus}</span></td>
                     <td><Badge status={d.status} /></td>
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
             </table>
           ) : (
@@ -915,44 +922,77 @@ function PlanningScreen({ ders, summary }) {
     acc[d.der_type] = (acc[d.der_type] || 0) + 1; return acc;
   }, {});
 
+  // Static HC formula: HC_limit = DT_kVA × 0.95 × 0.80
+  const hcRows = dts.map(dt => {
+    const ratedKva = dt.rated_kva || 100;
+    const hcLimit = Math.round(ratedKva * 0.95 * 0.80);
+    const usedKw = dt.used_capacity_kw || dt.current_der_kw || 0;
+    const utilPct = hcLimit > 0 ? (usedKw / hcLimit * 100) : 0;
+    const availKw = Math.max(0, hcLimit - usedKw);
+    const tl = utilPct > 85 ? "red" : utilPct > 60 ? "amber" : "green";
+    const tlColor = tl === "red" ? "var(--danger)" : tl === "amber" ? "var(--warning)" : "var(--success)";
+    const derCount = ders.filter(d => d.dt_id === dt.dt_id).length;
+    return { ...dt, hcLimit, usedKw: Math.round(usedKw), utilPct: Math.round(utilPct), availKw, tl, tlColor, derCount, ratedKva };
+  });
+  const hcRedCount = hcRows.filter(r => r.tl === "red").length;
+
   return (
     <div>
+      {/* PRD D.4 KPI strip */}
       <div className="kpi-grid" style={{ gridTemplateColumns: "repeat(4,1fr)" }}>
-        <KpiCard label="Total DER Assets" value={ders.length} sub="Onboarded in network" icon="⚡" />
-        <KpiCard label="Total HC" value={((summary?.feeders||[]).reduce((s,f)=>s+f.hosting_capacity_kw,0)/1000).toFixed(1)+"MW"} sub="EPRI DRIVE methodology" color="var(--cyan)" icon="🏗️" />
-        <KpiCard label="HC Utilized" value={((summary?.feeders||[]).reduce((s,f)=>s+f.used_capacity_kw,0)).toFixed(0)+"kW"} sub="Across all feeders" color="var(--solar)" icon="📊" />
-        <KpiCard label="Feeders" value={(summary?.feeders||[]).length} sub="Active distribution feeders" color="var(--purple)" icon="🗺️" />
+        <KpiCard label="DER Assets (Active)" value={ders.filter(d => d.status === "Online" || !d.status).length} sub={`of ${ders.length} registered`} color="var(--success)" icon="⚡" />
+        <KpiCard label="HC Red DTs" value={hcRedCount} sub="HC utilised > 85% — pause approvals" color={hcRedCount > 0 ? "var(--danger)" : "var(--success)"} icon="🔴" />
+        <KpiCard label="Total HC Available" value={`${hcRows.reduce((s,r) => s+r.availKw, 0)} kW`} sub="Across all pilot DTs" color="var(--cyan)" icon="🏗️" />
+        <KpiCard label="PM Surya Ghar Pipeline" value={ders.filter(d => d.status === "Pending" || d.lifecycle_status === "PENDING_APPROVAL").length} sub="Applications pending approval" color="var(--warning)" icon="📋" />
+      </div>
+
+      {/* HC formula box */}
+      <div style={{ background: "rgba(6,182,212,0.07)", border: "1px solid rgba(6,182,212,0.25)", borderRadius: 8, padding: "10px 16px", marginBottom: 14, fontSize: 12, color: "var(--text-muted)" }}>
+        <strong style={{ color: "var(--cyan)" }}>Static HC Formula (Phase 1):</strong>&nbsp;
+        HC_limit (kW) = DT_kVA × 0.95 (PF) × 0.80 (diversity) &nbsp;|&nbsp;
+        Traffic-light: <span style={{ color: "var(--success)" }}>●</span> Green &lt;60% &nbsp;
+        <span style={{ color: "var(--warning)" }}>●</span> Amber 60–85% &nbsp;
+        <span style={{ color: "var(--danger)" }}>●</span> Red &gt;85% — Grid Operator review required &nbsp;
+        <span style={{ color: "var(--danger)", fontWeight: 700 }}>●</span> Critical &gt;100% — pause new approvals
+        &nbsp;|&nbsp; Phase 2: dynamic HC from load flow (time-varying per 30-min block)
       </div>
 
       <div className="row row-2">
         <div className="card">
-          <div className="card-title">🏗️ Hosting Capacity by Distribution Transformer</div>
+          <div className="card-title">🏗️ Static Hosting Capacity — Per DT (PRD Module D.1)</div>
           <table>
-            <thead><tr><th>DT</th><th>Feeder</th><th>HC (kW)</th><th>Used (kW)</th><th>Headroom</th><th>Voltage Limit</th></tr></thead>
+            <thead>
+              <tr>
+                <th>DT</th><th>kVA</th><th>HC Limit (kW)</th><th>HC Utilised %</th><th>HC Available (kW)</th><th>DERs</th><th>Status</th>
+              </tr>
+            </thead>
             <tbody>
-              {(hc?.hosting_capacity || dts).map(h => {
-                const dt = dts.find(d => d.dt_id === (h.dt_id || h.dt_id));
-                const used = dt?.used_capacity_kw || 0;
-                const hcKw = h.hosting_capacity_kw;
-                const pct = hcKw > 0 ? Math.round(used / hcKw * 100) : 0;
-                return (
-                  <tr key={h.dt_id}>
-                    <td style={{ fontSize: 11 }}>{h.dt_id}</td>
-                    <td style={{ fontSize: 11 }}>{h.feeder_id}</td>
-                    <td style={{ fontWeight: 600, color: "var(--cyan)" }}>{hcKw}</td>
-                    <td>{used}</td>
-                    <td>
-                      <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                        <div style={{ flex: 1, height: 6, background: "var(--bg)", borderRadius: 3 }}>
-                          <div style={{ width: `${Math.min(100,pct)}%`, height: "100%", borderRadius: 3, background: pct > 80 ? "var(--danger)" : pct > 50 ? "var(--warning)" : "var(--success)" }} />
-                        </div>
-                        <span style={{ fontSize: 10, color: "var(--text-muted)" }}>{pct}%</span>
+              {hcRows.map(r => (
+                <tr key={r.dt_id}>
+                  <td>
+                    <div style={{ fontWeight: 600, fontSize: 11 }}>{r.dt_id}</div>
+                    <div style={{ fontSize: 10, color: "var(--text-muted)" }}>{r.name}</div>
+                  </td>
+                  <td style={{ fontSize: 11 }}>{r.ratedKva} kVA</td>
+                  <td style={{ color: "var(--cyan)", fontWeight: 600 }}>{r.hcLimit}</td>
+                  <td>
+                    <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                      <div style={{ width: 80, height: 6, background: "var(--bg)", borderRadius: 3 }}>
+                        <div style={{ width: `${Math.min(100, r.utilPct)}%`, height: "100%", borderRadius: 3, background: r.tlColor }} />
                       </div>
-                    </td>
-                    <td style={{ fontSize: 11 }}>{h.voltage_constraint_kw || "—"}kW</td>
-                  </tr>
-                );
-              })}
+                      <span style={{ fontSize: 11, color: r.tlColor, fontWeight: 700 }}>{r.utilPct}%</span>
+                    </div>
+                  </td>
+                  <td style={{ color: r.availKw < 10 ? "var(--danger)" : "var(--success)", fontWeight: 600 }}>{r.availKw}</td>
+                  <td>{r.derCount}</td>
+                  <td>
+                    <span style={{ padding: "2px 8px", borderRadius: 10, fontSize: 10, fontWeight: 700, background: `${r.tlColor}22`, color: r.tlColor, border: `1px solid ${r.tlColor}55` }}>
+                      {r.tl === "red" ? "🔴 RED" : r.tl === "amber" ? "🟡 AMBER" : "🟢 GREEN"}
+                    </span>
+                  </td>
+                </tr>
+              ))}
+              {hcRows.length === 0 && <tr><td colSpan={7} style={{ textAlign: "center", color: "var(--text-muted)", padding: 16 }}>Loading DT data…</td></tr>}
             </tbody>
           </table>
         </div>
@@ -3142,6 +3182,268 @@ function AlertsScreen() {
   );
 }
 
+// ─── Programs Screen (Module C) ──────────────────────────────────────────────
+
+function ProgramsScreen() {
+  const { useState, useEffect } = React;
+  const [programs, setPrograms] = useState([]);
+  const [selected, setSelected] = useState(null);
+  const [counterparty, setCounterparty] = useState(null);
+  const [prosumers, setProsumers] = useState([]);
+  const [tab, setTab] = useState("counterparty");
+  const [showCreate, setShowCreate] = useState(false);
+  const [form, setForm] = useState({ program_name: "", program_description: "", feeder_scope: "LK1", start_date: "2026-01-01", end_date: "2026-12-31", counterparty_name: "" });
+  const [saving, setSaving] = useState(false);
+
+  const load = () => apiFetch("/api/programs").then(d => d && setPrograms(d.programs || []));
+  useEffect(() => { load(); }, []);
+
+  const selectProgram = async (prog) => {
+    setSelected(prog);
+    setTab("counterparty");
+    const [cp, pr] = await Promise.all([
+      apiFetch(`/api/programs/${prog.program_id}/counterparty`),
+      apiFetch(`/api/programs/${prog.program_id}/prosumers`),
+    ]);
+    if (cp) setCounterparty(cp);
+    if (pr) setProsumers(pr.enrollments || []);
+  };
+
+  const createProgram = async () => {
+    setSaving(true);
+    const body = { ...form, feeder_scope: form.feeder_scope ? form.feeder_scope.split(",").map(s => s.trim()) : [] };
+    const r = await fetch("/api/programs", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    if (r.ok) { await load(); setShowCreate(false); setForm({ program_name: "", program_description: "", feeder_scope: "LK1", start_date: "2026-01-01", end_date: "2026-12-31", counterparty_name: "" }); }
+    setSaving(false);
+  };
+
+  const activateProgram = async (pid, status) => {
+    await fetch(`/api/programs/${pid}/status`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status }) });
+    load();
+    if (selected?.program_id === pid) setSelected(prev => ({ ...prev, status }));
+  };
+
+  const statusColor = s => ({ ACTIVE: "var(--success)", DRAFT: "var(--text-muted)", PAUSED: "var(--warning)", CLOSED: "var(--danger)" }[s] || "var(--text-muted)");
+
+  // 30-day bar chart SVG
+  const BarChart30d = ({ data }) => {
+    if (!data?.length) return null;
+    const W = 600, H = 120, PL = 36, PR = 8, PT = 6, PB = 24;
+    const cw = W - PL - PR, ch = H - PT - PB;
+    const maxV = Math.max(...data.map(d => d.gen_kwh), 1);
+    const bw = (cw / data.length) * 0.7;
+    return (
+      <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: H }} preserveAspectRatio="none">
+        {[0, 0.5, 1].map(t => <line key={t} x1={PL} x2={W - PR} y1={PT + ch * t} y2={PT + ch * t} stroke="#2A3A52" strokeDasharray="3 3" />)}
+        {data.map((d, i) => {
+          const gx = PL + (i / data.length) * cw + (cw / data.length - bw) / 2;
+          const bh = (d.gen_kwh / maxV) * ch;
+          return (
+            <g key={i}>
+              <rect x={gx} y={PT + ch - bh} width={bw} height={bh} fill="#FCD34D" rx={1} opacity={0.85} />
+              {i % 6 === 0 && <text x={gx + bw / 2} y={H - 8} textAnchor="middle" fontSize={8} fill="#8B9CB8">{d.date}</text>}
+            </g>
+          );
+        })}
+        {[0, 0.5, 1].map(t => <text key={t} x={PL - 3} y={PT + ch * (1 - t) + 4} textAnchor="end" fontSize={8} fill="#8B9CB8">{Math.round(maxV * t)}</text>)}
+      </svg>
+    );
+  };
+
+  if (selected) {
+    return (
+      <div className="screen" style={{ overflowY: "auto" }}>
+        <div className="screen-header" style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          <button onClick={() => setSelected(null)} style={{ background: "var(--bg)", border: "1px solid var(--border)", color: "var(--text-muted)", borderRadius: 6, padding: "5px 12px", cursor: "pointer", fontSize: 12 }}>← Back</button>
+          <div>
+            <div className="screen-title">{selected.program_name}</div>
+            <div style={{ fontSize: 12, color: "var(--text-muted)" }}>ID: {selected.program_id} · Incentive: {selected.incentive_type} (Phase 1 locked) · {selected.start_date} → {selected.end_date}</div>
+          </div>
+          <span style={{ marginLeft: "auto", padding: "4px 14px", borderRadius: 12, background: "rgba(0,0,0,0.3)", border: `1px solid ${statusColor(selected.status)}`, color: statusColor(selected.status), fontSize: 12, fontWeight: 700 }}>{selected.status}</span>
+          {selected.status === "DRAFT" && <button onClick={() => activateProgram(selected.program_id, "ACTIVE")} style={{ background: "var(--success)", border: "none", color: "#fff", borderRadius: 6, padding: "6px 14px", cursor: "pointer", fontSize: 12, fontWeight: 700 }}>Activate</button>}
+          {selected.status === "ACTIVE" && <button onClick={() => activateProgram(selected.program_id, "PAUSED")} style={{ background: "var(--warning)", border: "none", color: "#000", borderRadius: 6, padding: "6px 14px", cursor: "pointer", fontSize: 12, fontWeight: 700 }}>Pause</button>}
+        </div>
+
+        {counterparty && (
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(5,1fr)", gap: 10, marginBottom: 16 }}>
+            {[
+              ["Total Capacity", `${counterparty.total_capacity_kWp} kWp`, "var(--solar)"],
+              ["Current Gen", `${counterparty.total_gen_kW} kW`, "var(--success)"],
+              ["Today's Gen", `${counterparty.today_gen_kWh} kWh`, "var(--cyan)"],
+              ["Enrolled", counterparty.enrolled_count, "var(--text)"],
+              ["Registered", counterparty.registered_count, "var(--success)"],
+            ].map(([label, val, color]) => (
+              <div key={label} style={{ background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: 8, padding: "12px 14px" }}>
+                <div style={{ fontSize: 10, color: "var(--text-muted)", textTransform: "uppercase" }}>{label}</div>
+                <div style={{ fontSize: 22, fontWeight: 700, color, marginTop: 4 }}>{val}</div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        <div className="tab-bar" style={{ marginBottom: 14 }}>
+          {[["counterparty","📊 Counterparty"],["prosumers","👥 Prosumers"]].map(([id, label]) => (
+            <div key={id} className={`tab ${tab === id ? "active" : ""}`} onClick={() => setTab(id)}>{label}</div>
+          ))}
+        </div>
+
+        {tab === "counterparty" && counterparty && (
+          <div>
+            <div className="card">
+              <div className="card-title">📈 30-Day Generation — Counterparty Aggregate (kWh/day)</div>
+              <BarChart30d data={counterparty.gen_30d} />
+            </div>
+            <div className="card" style={{ marginTop: 12 }}>
+              <div className="card-title">🏗️ DT Breakdown</div>
+              <table>
+                <thead><tr><th>DT ID</th><th>DERs</th><th>Capacity (kWp)</th><th>Current Gen (kW)</th></tr></thead>
+                <tbody>
+                  {counterparty.dt_breakdown.map(dt => (
+                    <tr key={dt.dt_id}>
+                      <td style={{ fontWeight: 600 }}>{dt.dt_id}</td>
+                      <td>{dt.der_count}</td>
+                      <td style={{ color: "var(--solar)" }}>{dt.capacity_kWp}</td>
+                      <td style={{ color: "var(--success)" }}>{dt.gen_kW}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div className="card" style={{ marginTop: 12, borderColor: "var(--border)", fontSize: 12 }}>
+              <div className="card-title">ℹ️ Counterparty Model (Phase 1)</div>
+              <div style={{ color: "var(--text-muted)", lineHeight: 1.8 }}>
+                All prosumers in <strong style={{ color: "var(--text)" }}>{counterparty.counterparty_name}</strong> are reported as a single counterparty entity.
+                This is an internal operational grouping (Option C per PRD). No VPP regulatory registration, no SLDC participation, no market standing in Phase 1.
+                Incentive type is <strong style={{ color: "var(--accent)" }}>ADVISORY</strong> — locked for Phase 1.
+              </div>
+            </div>
+          </div>
+        )}
+
+        {tab === "prosumers" && (
+          <div>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+              <div style={{ fontSize: 12, color: "var(--text-muted)" }}>{prosumers.length} enrolled prosumers</div>
+              <div style={{ display: "flex", gap: 8 }}>
+                <button onClick={async () => { await fetch(`/api/programs/${selected.program_id}/prosumers/seed-demo`, { method: "POST" }); const pr = await apiFetch(`/api/programs/${selected.program_id}/prosumers`); if (pr) setProsumers(pr.enrollments || []); }}
+                  style={{ background: "var(--secondary)", border: "none", color: "#fff", borderRadius: 6, padding: "6px 14px", cursor: "pointer", fontSize: 12 }}>
+                  + Seed LK1 DERs
+                </button>
+              </div>
+            </div>
+            <div className="card" style={{ padding: 0, overflow: "hidden" }}>
+              <table>
+                <thead><tr><th>Consumer ID</th><th>Name</th><th>DT</th><th>Capacity (kWp)</th><th>Metering</th><th>Status</th><th>Invited</th><th>Registered</th></tr></thead>
+                <tbody>
+                  {prosumers.map(e => {
+                    const sColor = { REGISTERED: "var(--success)", INVITED: "var(--warning)", SUSPENDED: "var(--danger)", REMOVED: "var(--text-muted)" }[e.enrolment_status] || "var(--text-muted)";
+                    return (
+                      <tr key={e.consumer_id}>
+                        <td style={{ fontFamily: "monospace", fontSize: 11 }}>{e.consumer_id}</td>
+                        <td>{e.name}</td>
+                        <td>{e.dt_id}</td>
+                        <td style={{ color: "var(--solar)" }}>{e.capacity_kWp}</td>
+                        <td><span style={{ fontSize: 10, padding: "2px 6px", borderRadius: 4, background: "rgba(16,185,129,0.1)", color: "var(--success)", border: "1px solid rgba(16,185,129,0.3)" }}>{e.metering_type}</span></td>
+                        <td><span style={{ fontSize: 10, fontWeight: 700, color: sColor }}>{e.enrolment_status}</span></td>
+                        <td style={{ fontSize: 10, color: "var(--text-muted)" }}>{e.invited_at ? e.invited_at.slice(0, 10) : "—"}</td>
+                        <td style={{ fontSize: 10, color: "var(--text-muted)" }}>{e.registered_at ? e.registered_at.slice(0, 10) : "—"}</td>
+                      </tr>
+                    );
+                  })}
+                  {prosumers.length === 0 && <tr><td colSpan={8} style={{ textAlign: "center", padding: 24, color: "var(--text-muted)" }}>No prosumers enrolled. Click "Seed LK1 DERs" to add demo data.</td></tr>}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <div className="screen" style={{ overflowY: "auto" }}>
+      <div className="screen-header" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <div>
+          <div className="screen-title">📋 DERMS Programs</div>
+          <div className="screen-sub">Manage programs, enrol prosumers, track counterparty performance</div>
+        </div>
+        <button onClick={() => setShowCreate(true)} style={{ background: "var(--accent)", border: "none", color: "#000", borderRadius: 7, padding: "8px 18px", cursor: "pointer", fontWeight: 700, fontSize: 13 }}>+ New Program</button>
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 10, marginBottom: 20 }}>
+        {[
+          ["Active Programs", programs.filter(p => p.status === "ACTIVE").length, "var(--success)"],
+          ["Total Enrolled", programs.reduce((s, p) => s + (p.enrolled_count || 0), 0), "var(--solar)"],
+          ["Total Registered", programs.reduce((s, p) => s + (p.registered_count || 0), 0), "var(--cyan)"],
+        ].map(([label, val, color]) => (
+          <div key={label} style={{ background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: 10, padding: "14px 18px" }}>
+            <div style={{ fontSize: 11, color: "var(--text-muted)", textTransform: "uppercase" }}>{label}</div>
+            <div style={{ fontSize: 28, fontWeight: 700, color }}>{val}</div>
+          </div>
+        ))}
+      </div>
+
+      <div className="card" style={{ padding: 0, overflow: "hidden" }}>
+        <table>
+          <thead>
+            <tr><th>Program</th><th>Feeder Scope</th><th>Status</th><th>Incentive</th><th>Enrolled</th><th>Registered</th><th>Period</th><th></th></tr>
+          </thead>
+          <tbody>
+            {programs.map(p => (
+              <tr key={p.program_id} style={{ cursor: "pointer" }} onClick={() => selectProgram(p)}>
+                <td>
+                  <div style={{ fontWeight: 600 }}>{p.program_name}</div>
+                  <div style={{ fontSize: 10, color: "var(--text-muted)" }}>{p.program_id}</div>
+                </td>
+                <td style={{ fontSize: 11 }}>{(p.feeder_scope || []).join(", ") || "—"}</td>
+                <td><span style={{ fontWeight: 700, color: statusColor(p.status), fontSize: 11 }}>{p.status}</span></td>
+                <td><span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 4, background: "rgba(247,179,43,0.15)", color: "var(--accent)", border: "1px solid rgba(247,179,43,0.3)" }}>{p.incentive_type}</span></td>
+                <td>{p.enrolled_count || 0}</td>
+                <td style={{ color: "var(--success)" }}>{p.registered_count || 0}</td>
+                <td style={{ fontSize: 11, color: "var(--text-muted)" }}>{p.start_date} → {p.end_date}</td>
+                <td><span style={{ color: "var(--accent)", fontSize: 12 }}>View →</span></td>
+              </tr>
+            ))}
+            {programs.length === 0 && <tr><td colSpan={8} style={{ textAlign: "center", padding: 24, color: "var(--text-muted)" }}>No programs yet. Click "New Program" to create one.</td></tr>}
+          </tbody>
+        </table>
+      </div>
+
+      {showCreate && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 9999 }}>
+          <div style={{ background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: 12, padding: 28, width: 480 }}>
+            <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 18 }}>Create New Program</div>
+            {[
+              ["Program Name", "program_name", "text", "e.g. Varanasi Voltage Pilot 2026"],
+              ["Description", "program_description", "text", "Programme objective"],
+              ["Feeder Scope (comma-sep)", "feeder_scope", "text", "e.g. LK1, LK2"],
+              ["Counterparty Name", "counterparty_name", "text", "e.g. PuVVNL DER Pool 2026"],
+              ["Start Date", "start_date", "date", ""],
+              ["End Date", "end_date", "date", ""],
+            ].map(([label, key, type, ph]) => (
+              <div key={key} style={{ marginBottom: 12 }}>
+                <label style={{ fontSize: 11, color: "var(--text-muted)", display: "block", marginBottom: 4, textTransform: "uppercase" }}>{label}</label>
+                <input type={type} placeholder={ph} value={form[key]} onChange={e => setForm(f => ({ ...f, [key]: e.target.value }))}
+                  style={{ width: "100%", background: "var(--bg)", border: "1px solid var(--border)", color: "var(--text)", borderRadius: 6, padding: "8px 12px", fontSize: 13, boxSizing: "border-box" }} />
+              </div>
+            ))}
+            <div style={{ fontSize: 11, color: "var(--text-muted)", padding: "8px 12px", background: "var(--bg)", borderRadius: 6, marginBottom: 14 }}>
+              Incentive type is locked to <strong style={{ color: "var(--accent)" }}>ADVISORY</strong> in Phase 1. Financial and lucky draw incentives are Phase 2.
+            </div>
+            <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+              <button onClick={() => setShowCreate(false)} style={{ background: "transparent", border: "1px solid var(--border)", color: "var(--text-muted)", borderRadius: 6, padding: "7px 16px", cursor: "pointer" }}>Cancel</button>
+              <button onClick={createProgram} disabled={saving || !form.program_name}
+                style={{ background: "var(--accent)", border: "none", color: "#000", borderRadius: 6, padding: "7px 18px", cursor: "pointer", fontWeight: 700 }}>
+                {saving ? "Creating…" : "Create Program"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── Main App ─────────────────────────────────────────────────────────────────
 
 // ─── OE Monitor Screen ───────────────────────────────────────────────────────
@@ -3444,8 +3746,8 @@ function LoginScreen({ onLogin }) {
       <div className="login-box">
         <div className="login-logo">
           <div className="login-logo-icon">⚡</div>
-          <div className="login-logo-title">DERMS</div>
-          <div className="login-logo-sub">Varanasi Pilot · DVVNL / PUVVNL</div>
+          <div className="login-logo-title">Neural Grid Platform</div>
+          <div className="login-logo-sub">L&amp;T DERMS · PuVVNL Varanasi Pilot</div>
         </div>
         <div className="login-demo">
           <div>Demo: <b>derms_admin</b> / <b>derms@123</b></div>
@@ -3464,7 +3766,7 @@ function LoginScreen({ onLogin }) {
         </button>
         {error && <div className="login-error">{error}</div>}
         <div className="login-footer">
-          L&amp;T DES · DERMS Prototype v2.1.0<br/>
+          L&amp;T Neural Grid Platform · Phase 1<br/>
           <span style={{color:"var(--warning)"}}>Prototype — not for production use</span>
         </div>
       </div>
@@ -3526,14 +3828,15 @@ function App() {
 
   const navItems = [
     { id: "dashboard",       icon: "📊", label: "Dashboard" },
-    { id: "fleet",           icon: "⚡", label: "DER Fleet" },
-    { id: "oe-monitor",      icon: "🔁", label: "OE Monitor" },
-    { id: "planning",        icon: "🗺️", label: "Planning & GIS" },
+    { id: "programs",        icon: "📋", label: "Programs" },
+    { id: "fleet",           icon: "⚡", label: "DER Asset Registry" },
+    { id: "planning",        icon: "🗺️", label: "Planning & HC" },
+    { id: "alerts",          icon: "🔔", label: "Monitoring & Alerts" },
     { id: "scheduling",      icon: "📅", label: "Scheduling" },
     { id: "demand-response", icon: "📉", label: "Demand Response" },
-    { id: "alerts",          icon: "🔔", label: "Alerts" },
-    { id: "control",         icon: "🎛️", label: "Control & Optimization" },
-    { id: "analytics",       icon: "🤖", label: "Data Analytics" },
+    { id: "oe-monitor",      icon: "🔁", label: "OE Monitor (Ph.2)" },
+    { id: "analytics",       icon: "🤖", label: "Analytics & Reports" },
+    { id: "control",         icon: "🎛️", label: "Control" },
     { id: "adms",            icon: "🏭", label: "ADMS / CIM" },
     { id: "__prosumer__",    icon: "🏠", label: "Prosumer Portal ↗" },
   ];
@@ -3544,8 +3847,8 @@ function App() {
     <div className="app">
       <div className="sidebar">
         <div className="sidebar-logo">
-          <div className="logo-text">⚡ DERMS</div>
-          <div className="logo-sub">Varanasi Pilot · PUVVNL</div>
+          <div className="logo-text">⚡ Neural Grid</div>
+          <div className="logo-sub">L&amp;T DERMS · PuVVNL Varanasi</div>
         </div>
         <div className="nav">
           {navItems.map(n => (
@@ -3585,7 +3888,7 @@ function App() {
             <div className="header-title">
               {navItems.find(n => n.id === screen)?.icon} {navItems.find(n => n.id === screen)?.label}
             </div>
-            <div className="header-sub">DERMS Prototype · Varanasi, UP · {new Date().toLocaleDateString()}</div>
+            <div className="header-sub">Neural Grid Platform · PuVVNL Varanasi · Phase 1 · {new Date().toLocaleDateString()}</div>
           </div>
           <div className="header-right">
             <div className="badge-pills">
@@ -3602,6 +3905,7 @@ function App() {
 
         <div className="content">
           {screen === "dashboard"  && <DashboardScreen summary={summary} genProfile={genProfile} ders={ders} />}
+          {screen === "programs"   && <ProgramsScreen />}
           {screen === "fleet"      && <DERFleetScreen ders={ders} />}
           {screen === "oe-monitor" && <OEMonitorScreen />}
           {screen === "planning"   && <PlanningScreen ders={ders} summary={summary} />}

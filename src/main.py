@@ -182,6 +182,7 @@ from src.api.loadflow_routes import router as loadflow_router
 from src.api.prosumer_routes import router as prosumer_router
 from src.api.oe_routes import router as oe_router
 from src.api.forecast_routes import router as forecast_router
+from src.api.program_routes import router as program_router
 from src.integrations.adms.simulator import router as adms_sim_router
 from src.integrations.ieee2030_5.server import router as ieee_router
 
@@ -194,6 +195,7 @@ app.include_router(loadflow_router)
 app.include_router(prosumer_router)
 app.include_router(oe_router)
 app.include_router(forecast_router)
+app.include_router(program_router)
 app.include_router(adms_sim_router)
 app.include_router(ieee_router)
 

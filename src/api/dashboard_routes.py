@@ -99,18 +99,21 @@ async def update_alert(alert_id: str, body: AlertAction):
 
 @router.post("/alerts/seed-demo")
 async def seed_demo_alerts():
-    """Seed demo alerts covering all PRD alert categories (A-01 through A-15)."""
+    """Seed demo alerts matching PRD Module E.4 alert catalogue exactly."""
     alerts = [
-        ("warning",  "HIGH",   "A-01 Voltage: LK1-DT-05 (Rasmi Nagar) at 1.058 pu — approaching CEA upper limit (1.06 pu)", "voltage-monitoring", "LK1-DT-05", "DT"),
-        ("critical", "HIGH",   "A-04 Thermal: LK1-DT-02 (Madhav Market) loaded at 92% — above 90% nameplate threshold", "thermal-monitoring", "LK1-DT-02", "DT"),
-        ("warning",  "HIGH",   "A-03 RPF: LK1-DT-05 (Rasmi Nagar) exporting 8.2 kW — DER gen 54 kW > load 46 kW", "oe-engine", "LK1-DT-05", "DT"),
-        ("warning",  "MEDIUM", "A-06 OE Exceedance: LK1-DER-004 generating 52.1 kW, OE limit 48.3 kW (+3.8 kW excess)", "oe-engine", "LK1-DER-004", "DER"),
-        ("warning",  "MEDIUM", "A-05 Thermal Pre-Alert: LK1-DT-08 (Sanketmochan) at 79% loading — approaching 75% warning threshold", "thermal-monitoring", "LK1-DT-08", "DT"),
-        ("critical", "HIGH",   "A-09 DER Anomaly: LK1-DER-004 (50kW) reporting zero output at 13:00 IST during peak solar hours", "der-monitoring", "LK1-DER-004", "DER"),
-        ("info",     "LOW",    "A-07 HC: LK1-DT-05 (Rasmi Nagar) hosting capacity utilised at 28% (54 kWp / 190 kW HC)", "load-flow", "LK1-DT-05", "DT"),
-        ("info",     "LOW",    "A-11 Forecast: Fleet generation 18% below D+1 forecast (cloud cover event 11:00–14:00 IST)", "forecast", "LK1", "Feeder"),
-        ("warning",  "MEDIUM", "A-15 SLDC: Day-ahead schedule uploaded — 6 blocks with shortfall 17:00–20:00 IST, DR event recommended", "demand-response", None, None),
-        ("info",     "LOW",    "pandapower BFS load flow completed in 0.09s — all 8 DTs within CEA voltage limits", "load-flow", "LK1", "Feeder"),
+        # Priority P1 — in-app + SMS + email to Grid Operator
+        ("critical", "HIGH",   "DT Overload: LK1-DT-02 (Madhav Market) loading at 103% for 2 consecutive blocks — CEA thermal limit exceeded", "Pipeline A — DT meter", "LK1-DT-02", "DT"),
+        ("critical", "HIGH",   "Voltage Violation: LK1-DT-05 (Rasmi Nagar) voltage 1.064 pu > 1.06 pu limit for 2 blocks — Grid Operator action required", "Pipeline A — DT meter", "LK1-DT-05", "DT"),
+        ("critical", "HIGH",   "MDMS Feed Stale: No DT meter records received for > 60 min — pipeline A ingest failure, 4 of 8 DTs missing", "mdms-integration-svc", None, None),
+        # Priority P2 — in-app + email to Grid Operator
+        ("warning",  "HIGH",   "DT Pre-Alert: LK1-DT-08 (Sanketmochan Purani Gali) loading at 84% — within 80–100% pre-alert band", "Pipeline A — DT meter", "LK1-DT-08", "DT"),
+        ("warning",  "HIGH",   "Voltage Pre-Alert: LK1-DT-06 voltage 1.043 pu — in 1.04–1.06 pu amber band (CERC pre-alert threshold)", "Pipeline A — DT meter", "LK1-DT-06", "DT"),
+        ("warning",  "HIGH",   "Voltage Sustained: LK1-DT-05 voltage > 1.06 pu unresolved for 65 min — Nodal Officer email escalation triggered", "Pipeline A — DT meter", "LK1-DT-05", "DT"),
+        ("warning",  "MEDIUM", "HC Red: LK1-DT-05 (Rasmi Nagar) hosting capacity utilised at 91% (54 kWp active / 59 kW HC limit) — pause new approvals", "der-registry-svc", "LK1-DT-05", "DT"),
+        ("warning",  "MEDIUM", "Reverse Power Flow: LK1 feeder net import negative — DT aggregate export 23.4 kW, generation 68 kW > load 45 kW", "Pipeline A — DT meter", "LK1", "Feeder"),
+        # Priority P3 — in-app to Grid Operator
+        ("warning",  "MEDIUM", "DER Underperforming: LK1-DER-004 (50 kWp) actual 3.1 kW vs irradiance-expected 34.2 kW — performance ratio 9% (< 20% threshold for 3 daylight blocks)", "Pipeline C vs forecast", "LK1-DER-004", "DER"),
+        ("info",     "LOW",    "Forecast: DT overload expected on LK1-DT-02 within next 4 blocks — forecast loading 87% at 14:30 IST, recommend DR event", "forecast-svc", "LK1-DT-02", "DT"),
     ]
     for args in alerts:
         fleet.add_alert(*args)
