@@ -4079,8 +4079,6 @@ function App() {
     { id: "demand-response", icon: "📉", label: "Demand Response" },
     { id: "oe-monitor",      icon: "🔁", label: "OE Monitor (Ph.2)" },
     { id: "analytics",       icon: "🤖", label: "Analytics & Reports" },
-    { id: "control",         icon: "🎛️", label: "Control" },
-    { id: "adms",            icon: "🏭", label: "ADMS / CIM" },
     { id: "__prosumer__",    icon: "🏠", label: "Prosumer Portal ↗" },
   ];
 
@@ -4155,9 +4153,7 @@ function App() {
           {screen === "scheduling"       && <SchedulingScreen ders={ders} />}
           {screen === "demand-response" && <DemandResponseScreen ders={ders} summary={summary} />}
           {screen === "alerts"     && <AlertsScreen />}
-          {screen === "control"         && <ControlScreen ders={ders} summary={summary} />}
           {screen === "analytics"  && <AnalyticsScreen ders={ders} genProfile={genProfile} />}
-          {screen === "adms"       && <ADMSScreen />}
         </div>
       </div>
     </div>
