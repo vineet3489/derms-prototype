@@ -3,7 +3,7 @@ CIM XML Parser for GE ADMS Integration
 Parses IEC 61970/61968 CIM network model XML into DERMS internal models.
 In production this connects to GE ADMS via IEC 61968 Message Bus or APM REST API.
 """
-from lxml import etree
+from xml.etree import ElementTree as etree
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 import logging
@@ -76,7 +76,7 @@ def parse_cim_xml(xml_content: str) -> CIMNetworkModel:
 
     try:
         root = etree.fromstring(xml_content.encode("utf-8"))
-    except etree.XMLSyntaxError as e:
+    except etree.ParseError as e:
         logger.error(f"CIM XML parse error: {e}")
         return model
 
