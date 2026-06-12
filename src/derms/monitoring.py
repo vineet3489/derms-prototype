@@ -198,13 +198,18 @@ async def real_pilot_simulation_loop():
                         (current_kw / (nameplate * solar_factor) * 100) if solar_factor > 0 else 100.0, 1
                     )
 
-            # Auto-run load flow for LK1 on each 15-min simulated cycle
+            # Auto-run load flow for LK1 — offloaded to thread pool so it
+            # never blocks the asyncio event loop (pandapower is CPU-bound)
             try:
+                import asyncio
                 from src.loadflow.engine import run_load_flow
                 from src.api.loadflow_routes import _enrich_dts_with_realtime, _enrich_ders_with_realtime
                 dts = _enrich_dts_with_realtime("LK1")
                 ders = _enrich_ders_with_realtime("LK1")
-                run_load_flow("LK1", dts, ders, label="quasi_realtime")
+                loop = asyncio.get_event_loop()
+                await loop.run_in_executor(
+                    None, run_load_flow, "LK1", dts, ders, "quasi_realtime"
+                )
             except Exception as lf_err:
                 logger.warning(f"Load flow cycle error: {lf_err}")
 
