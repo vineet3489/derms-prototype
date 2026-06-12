@@ -3508,7 +3508,7 @@ function OEMonitorScreen() {
 
       {/* Tab bar */}
       <div style={{ display: "flex", gap: 2, marginBottom: 0, borderBottom: "1px solid var(--border)" }}>
-        {[["overview","Fleet Overview"],["schedule","OE Schedule"],["rpf","RPF Status"],["violations","Violations"],["forecast","D+1 Forecast"]].map(([t,l]) => (
+        {[["overview","Fleet Overview"],["schedule","OE Schedule"],["rpf","RPF Status"],["violations","Violations"],["forecast","D+1 Forecast"],["sandbox","🔧 Sandbox"]].map(([t,l]) => (
           <button key={t} style={tabStyle(t)} onClick={() => setTab(t)}>{l}</button>
         ))}
       </div>
@@ -3677,6 +3677,9 @@ function OEMonitorScreen() {
             </div>
           </div>
         )}
+
+        {/* SANDBOX TAB */}
+        {tab === "sandbox" && <SandboxTab />}
       </div>
     </div>
   );
@@ -3712,6 +3715,246 @@ function DTScheduleView({ dtId }) {
       <div style={{ marginTop: 10, fontSize: 11, color: "var(--text-muted)" }}>
         RPF forecast blocks: {schedule.filter(b => b.rpf_forecast).length} of 48
       </div>
+    </div>
+  );
+}
+
+// ── Load Flow Sandbox ─────────────────────────────────────────────────────────
+function SandboxTab() {
+  const [conductors, setConductors] = React.useState({});
+  const [ders, setDers] = React.useState([]);          // [{der_id, dt_id, nameplate_kw, current_kw}]
+  const [dtList, setDtList] = React.useState([]);      // [{dt_id, name, rated_kva, total_load_kw}]
+  const [headVoltage, setHeadVoltage] = React.useState("1.03");
+  const [conductorType, setConductorType] = React.useState("ACSR_WEASEL_80");
+  const [dtLoads, setDtLoads] = React.useState({});    // {dt_id: "kw"}
+  const [derGens, setDerGens] = React.useState({});    // {der_id: "kw"}
+  const [result, setResult] = React.useState(null);
+  const [running, setRunning] = React.useState(false);
+  const [error, setError] = React.useState(null);
+  const [loaded, setLoaded] = React.useState(false);
+
+  React.useEffect(() => {
+    Promise.all([
+      fetch("/api/loadflow/conductors").then(r => r.json()).catch(() => ({ conductors: {} })),
+      fetch("/api/ders?feeder_id=LK1").then(r => r.json()).catch(() => ({ ders: [] })),
+      fetch("/api/loadflow/hosting-capacity?feeder_id=LK1").then(r => r.json()).catch(() => ({ dt_hc: [] })),
+    ]).then(([condData, derData, hcData]) => {
+      setConductors(condData.conductors || {});
+      const fleetDers = (derData.ders || []).filter(d => d.feeder_id === "LK1" || !d.feeder_id);
+      setDers(fleetDers.map(d => ({ der_id: d.der_id, dt_id: d.dt_id, nameplate_kw: d.nameplate_kw || 0, current_kw: d.current_kw || 0 })));
+      const dg = {};
+      fleetDers.forEach(d => { dg[d.der_id] = String((d.current_kw || 0).toFixed(1)); });
+      setDerGens(dg);
+
+      const hcRows = hcData.dt_hc || [];
+      setDtList(hcRows.map(r => ({ dt_id: r.dt_id, name: r.dt_name || r.dt_id, rated_kva: r.rated_kva })));
+      const dl = {};
+      hcRows.forEach(r => { dl[r.dt_id] = String((r.rated_kva * 0.40).toFixed(1)); });
+      setDtLoads(dl);
+      setLoaded(true);
+    });
+  }, []);
+
+  const runSandbox = () => {
+    setRunning(true); setError(null); setResult(null);
+    const payload = {
+      feeder_id: "LK1",
+      feeder_head_voltage_pu: parseFloat(headVoltage) || 1.03,
+      conductor_type: conductorType,
+      dt_loads: Object.fromEntries(
+        Object.entries(dtLoads).filter(([, v]) => v !== "").map(([k, v]) => [k, parseFloat(v) || 0])
+      ),
+      der_gens: Object.fromEntries(
+        Object.entries(derGens).filter(([, v]) => v !== "").map(([k, v]) => [k, parseFloat(v) || 0])
+      ),
+      dt_kva_overrides: {},
+    };
+    fetch("/api/loadflow/sandbox", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    }).then(r => r.json()).then(data => {
+      if (data.status === "failed" || data.detail) {
+        setError(data.error || data.detail || "Unknown error");
+      } else {
+        setResult(data);
+      }
+      setRunning(false);
+    }).catch(e => { setError(String(e)); setRunning(false); });
+  };
+
+  const inp = { background: "rgba(255,255,255,0.06)", border: "1px solid var(--border)", borderRadius: 4, color: "var(--text)", padding: "3px 6px", width: 80, fontSize: 12 };
+  const sel = { ...inp, width: "auto" };
+
+  if (!loaded) return <div style={{ padding: 40, color: "var(--text-muted)", textAlign: "center" }}>Loading fleet data…</div>;
+
+  return (
+    <div>
+      <div style={{ fontSize: 12, color: "var(--text-muted)", marginBottom: 14 }}>
+        Run the pandapower load flow with custom parameters. Results are isolated — they do not affect the live dashboard cache.
+        Outputs: bus voltages, DT transformer loading, and per-DER Operating Envelope.
+      </div>
+
+      {/* ── Feeder parameters ── */}
+      <div style={{ background: "rgba(255,255,255,0.04)", borderRadius: 8, padding: 14, marginBottom: 12 }}>
+        <div style={{ fontSize: 12, color: "var(--accent)", fontWeight: 600, marginBottom: 10 }}>Feeder Parameters — LK1</div>
+        <div style={{ display: "flex", gap: 24, flexWrap: "wrap", alignItems: "center", fontSize: 12 }}>
+          <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <span style={{ color: "var(--text-muted)" }}>Head voltage (pu)</span>
+            <input style={inp} type="number" step="0.01" min="0.95" max="1.10" value={headVoltage} onChange={e => setHeadVoltage(e.target.value)} />
+          </label>
+          <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <span style={{ color: "var(--text-muted)" }}>Conductor type</span>
+            <select style={sel} value={conductorType} onChange={e => setConductorType(e.target.value)}>
+              {Object.entries(conductors).map(([k, v]) => (
+                <option key={k} value={k}>{v.label} ({v.r_ohm_per_km} Ω/km, {v.max_current_a} A)</option>
+              ))}
+            </select>
+          </label>
+        </div>
+      </div>
+
+      {/* ── DT Consumer Loads ── */}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 12 }}>
+        <div style={{ background: "rgba(255,255,255,0.04)", borderRadius: 8, padding: 14 }}>
+          <div style={{ fontSize: 12, color: "var(--accent)", fontWeight: 600, marginBottom: 8 }}>DT Consumer Loads (kW)</div>
+          <div style={{ fontSize: 11, color: "var(--text-muted)", marginBottom: 8 }}>Source: MDMS Pipeline A · Edit to override</div>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+            <thead>
+              <tr style={{ color: "var(--text-muted)" }}>
+                <th style={{ padding: "4px 6px", textAlign: "left", fontWeight: 500 }}>DT</th>
+                <th style={{ padding: "4px 6px", textAlign: "left", fontWeight: 500 }}>kVA</th>
+                <th style={{ padding: "4px 6px", textAlign: "left", fontWeight: 500 }}>Load kW</th>
+              </tr>
+            </thead>
+            <tbody>
+              {dtList.map(dt => (
+                <tr key={dt.dt_id} style={{ borderBottom: "1px solid rgba(255,255,255,0.04)" }}>
+                  <td style={{ padding: "4px 6px", fontFamily: "monospace", color: "var(--text-muted)", fontSize: 11 }}>{dt.dt_id}</td>
+                  <td style={{ padding: "4px 6px" }}>{dt.rated_kva}</td>
+                  <td style={{ padding: "4px 6px" }}>
+                    <input style={inp} type="number" step="1" min="0"
+                      value={dtLoads[dt.dt_id] ?? ""}
+                      onChange={e => setDtLoads(prev => ({ ...prev, [dt.dt_id]: e.target.value }))} />
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+
+        {/* ── DER Generation Inputs ── */}
+        <div style={{ background: "rgba(255,255,255,0.04)", borderRadius: 8, padding: 14 }}>
+          <div style={{ fontSize: 12, color: "var(--accent)", fontWeight: 600, marginBottom: 8 }}>DER Generation (kW)</div>
+          <div style={{ fontSize: 11, color: "var(--text-muted)", marginBottom: 8 }}>Source: MDMS Pipeline C · Edit to override</div>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+            <thead>
+              <tr style={{ color: "var(--text-muted)" }}>
+                <th style={{ padding: "4px 6px", textAlign: "left", fontWeight: 500 }}>DER</th>
+                <th style={{ padding: "4px 6px", textAlign: "left", fontWeight: 500 }}>Plate</th>
+                <th style={{ padding: "4px 6px", textAlign: "left", fontWeight: 500 }}>Gen kW</th>
+              </tr>
+            </thead>
+            <tbody>
+              {ders.map(d => (
+                <tr key={d.der_id} style={{ borderBottom: "1px solid rgba(255,255,255,0.04)" }}>
+                  <td style={{ padding: "4px 6px", fontFamily: "monospace", color: "var(--text-muted)", fontSize: 11 }}>{d.der_id}</td>
+                  <td style={{ padding: "4px 6px" }}>{d.nameplate_kw} kW</td>
+                  <td style={{ padding: "4px 6px" }}>
+                    <input style={inp} type="number" step="0.1" min="0" max={d.nameplate_kw}
+                      value={derGens[d.der_id] ?? ""}
+                      onChange={e => setDerGens(prev => ({ ...prev, [d.der_id]: e.target.value }))} />
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {/* ── Run button ── */}
+      <button onClick={runSandbox} disabled={running}
+        style={{ padding: "9px 28px", background: running ? "var(--text-muted)" : "var(--accent)", color: "#fff", border: "none", borderRadius: 6, cursor: running ? "default" : "pointer", fontSize: 13, fontWeight: 600, marginBottom: 16 }}>
+        {running ? "⏳ Running pandapower…" : "▶ Run Load Flow"}
+      </button>
+
+      {error && (
+        <div style={{ background: "rgba(239,68,68,0.12)", border: "1px solid rgba(239,68,68,0.3)", borderRadius: 8, padding: 12, marginBottom: 12, fontSize: 12, color: "#EF4444" }}>
+          ❌ {error}
+        </div>
+      )}
+
+      {/* ── Results ── */}
+      {result && (
+        <div>
+          {/* Summary strip */}
+          <div style={{ display: "flex", gap: 12, marginBottom: 14, flexWrap: "wrap" }}>
+            <KpiCard label="Run time" value={result.elapsed_s?.toFixed(2)} unit="s" sub={`${result.inputs?.conductor_label}`} color="var(--cyan)" icon="⚡" />
+            <KpiCard label="Voltage violations" value={result.summary?.voltage_violations} sub="buses outside ±6%" color={result.summary?.voltage_violations > 0 ? "var(--danger)" : "var(--success)"} icon="⚡" />
+            <KpiCard label="Thermal violations" value={result.summary?.thermal_violations} sub="lines over rated current" color={result.summary?.thermal_violations > 0 ? "var(--danger)" : "var(--success)"} icon="🌡️" />
+            <KpiCard label="DERs exceeding OE" value={result.summary?.ders_exceeding_oe} sub={`of ${result.summary?.total_ders} DERs`} color={result.summary?.ders_exceeding_oe > 0 ? "var(--danger)" : "var(--success)"} icon="🚫" />
+          </div>
+
+          {/* Bus voltages */}
+          <div style={{ marginBottom: 12 }}>
+            <div style={{ fontSize: 12, color: "var(--accent)", fontWeight: 600, marginBottom: 6 }}>Bus Voltages — LV Secondary (0.4 kV)</div>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+              <thead>
+                <tr style={{ color: "var(--text-muted)" }}>
+                  {["DT","Order","Voltage (pu)","Voltage (V)","Status"].map(h => (
+                    <th key={h} style={{ padding: "5px 10px", textAlign: "left", borderBottom: "1px solid var(--border)", fontWeight: 500 }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {(result.loadflow?.bus_voltages || []).map(bv => {
+                  const stColor = bv.status === "violation" ? "#EF4444" : bv.status === "pre_alert" ? "#F59E0B" : "#10B981";
+                  return (
+                    <tr key={bv.dt_id} style={{ borderBottom: "1px solid rgba(255,255,255,0.05)" }}>
+                      <td style={{ padding: "5px 10px", fontFamily: "monospace", color: "var(--accent)" }}>{bv.dt_id}</td>
+                      <td style={{ padding: "5px 10px", color: "var(--text-muted)" }}>{bv.order}</td>
+                      <td style={{ padding: "5px 10px", fontWeight: 600 }}>{bv.vm_pu?.toFixed(4)}</td>
+                      <td style={{ padding: "5px 10px" }}>{bv.vm_v} V</td>
+                      <td style={{ padding: "5px 10px", color: stColor, fontWeight: 600 }}>{(bv.status || "normal").toUpperCase()}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+
+          {/* OE per DER */}
+          <div>
+            <div style={{ fontSize: 12, color: "var(--accent)", fontWeight: 600, marginBottom: 6 }}>Operating Envelope per DER</div>
+            <div style={{ fontSize: 11, color: "var(--text-muted)", marginBottom: 6 }}>OE = min(nameplate, voltage_DOC, thermal_HC, RPF_limit)</div>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11 }}>
+              <thead>
+                <tr style={{ color: "var(--text-muted)" }}>
+                  {["DER","DT","Nameplate","Gen kW","OE kW","V-DOC","Thermal","RPF","Binding","Status"].map(h => (
+                    <th key={h} style={{ padding: "5px 8px", textAlign: "left", borderBottom: "1px solid var(--border)", fontWeight: 500 }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {(result.oe_per_der || []).map(r => (
+                  <tr key={r.der_id} style={{ borderBottom: "1px solid rgba(255,255,255,0.05)", background: r.exceeding ? "rgba(239,68,68,0.06)" : "transparent" }}>
+                    <td style={{ padding: "5px 8px", fontFamily: "monospace" }}>{r.der_id}</td>
+                    <td style={{ padding: "5px 8px", color: "var(--text-muted)" }}>{r.dt_id}</td>
+                    <td style={{ padding: "5px 8px" }}>{r.nameplate_kw} kW</td>
+                    <td style={{ padding: "5px 8px" }}>{r.current_kw} kW</td>
+                    <td style={{ padding: "5px 8px", color: r.exceeding ? "#EF4444" : "#10B981", fontWeight: 700 }}>{r.oe_kw} kW</td>
+                    <td style={{ padding: "5px 8px", color: "var(--text-muted)" }}>{r.oe_voltage_kw} kW</td>
+                    <td style={{ padding: "5px 8px", color: "var(--text-muted)" }}>{r.oe_thermal_kw} kW</td>
+                    <td style={{ padding: "5px 8px", color: "var(--text-muted)" }}>{r.oe_rpf_kw} kW</td>
+                    <td style={{ padding: "5px 8px", fontSize: 10, color: "#F59E0B" }}>{r.binding_constraint}</td>
+                    <td style={{ padding: "5px 8px", color: r.exceeding ? "#EF4444" : "#10B981", fontWeight: 600 }}>{r.exceeding ? `EXCEEDING +${r.excess_kw}kW` : "OK"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

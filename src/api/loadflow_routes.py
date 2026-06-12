@@ -23,7 +23,7 @@ from src.loadflow.network_config import (
     load_config, save_config, get_feeder_config,
     CONDUCTOR_LIBRARY, FeederNetworkConfig
 )
-from src.loadflow.engine import run_load_flow, run_whatif, get_latest_results, get_all_results
+from src.loadflow.engine import run_load_flow, run_whatif, get_latest_results, get_all_results, run_load_flow_sandbox
 from src.data.real_pilot_data import LANKA_DTS, LANKA_DERS
 
 router = APIRouter(prefix="/api/loadflow", tags=["Load Flow"])
@@ -378,5 +378,131 @@ async def get_hosting_capacity(feeder_id: str = "LK1"):
             "dts_green": sum(1 for r in results if r["traffic_light"] == "green"),
             "dts_amber": sum(1 for r in results if r["traffic_light"] == "amber"),
             "dts_red": sum(1 for r in results if r["traffic_light"] == "red"),
+        },
+    }
+
+
+# ─── Sandbox endpoint ─────────────────────────────────────────────────────────
+
+class SandboxParams(BaseModel):
+    feeder_id: str = "LK1"
+    feeder_head_voltage_pu: float = 1.03
+    conductor_type: str = "ACSR_WEASEL_80"
+    dt_loads: dict = {}        # {dt_id: load_kw} — overrides per-DT consumer load
+    der_gens: dict = {}        # {der_id: gen_kw}  — overrides per-DER generation
+    dt_kva_overrides: dict = {}  # {dt_id: rated_kva}
+
+
+def _compute_sandbox_oe(dts: list, ders: list, lf: dict, cfg) -> list:
+    """Compute OE per DER inline from sandbox load flow results."""
+    doc_map = {d["der_id"]: d["doc_kw"] for d in lf.get("doc_per_der", [])}
+    dt_loading_pct = lf.get("dt_loading_pct", {})
+
+    dt_kva_map = {dt["id"]: cfg.dt_kva_overrides.get(dt["id"], dt.get("rated_kva", 100)) for dt in dts}
+    dt_load_map = {dt["id"]: dt.get("total_load_kw", dt_kva_map.get(dt["id"], 100) * 0.40) for dt in dts}
+
+    dt_ders: dict = {}
+    for der in ders:
+        dt_ders.setdefault(der["dt_id"], []).append(der)
+
+    rows = []
+    for dt_id, dt_ders_list in dt_ders.items():
+        rated_kva = dt_kva_map.get(dt_id, 100)
+        consumer_load_kw = dt_load_map.get(dt_id, rated_kva * 0.40)
+        total_nameplate = sum(d.get("nameplate_kw", 0) for d in dt_ders_list) or 1.0
+
+        for der in dt_ders_list:
+            der_id = der["der_id"]
+            nameplate_kw = der.get("nameplate_kw", 0)
+            current_kw = der.get("current_kw", 0)
+            prop = nameplate_kw / total_nameplate
+
+            oe_v = doc_map.get(der_id, nameplate_kw)
+            oe_th = prop * rated_kva * 0.95 * 0.80
+            oe_rpf = prop * consumer_load_kw
+            oe_kw = round(max(0.0, min(nameplate_kw, oe_v, oe_th, oe_rpf)), 2)
+
+            vals = {"voltage_DOC": oe_v, "thermal_HC": oe_th, "RPF_limit": oe_rpf, "nameplate": nameplate_kw}
+            binding = min(vals, key=lambda k: vals[k])
+            exceeding = current_kw > oe_kw + 0.5
+
+            rows.append({
+                "der_id": der_id,
+                "dt_id": dt_id,
+                "nameplate_kw": nameplate_kw,
+                "current_kw": round(current_kw, 2),
+                "oe_kw": oe_kw,
+                "binding_constraint": binding,
+                "oe_voltage_kw": round(oe_v, 2),
+                "oe_thermal_kw": round(oe_th, 2),
+                "oe_rpf_kw": round(oe_rpf, 2),
+                "exceeding": exceeding,
+                "excess_kw": round(max(0, current_kw - oe_kw), 2),
+                "consumer_load_kw": round(consumer_load_kw, 2),
+                "dt_loading_pct": dt_loading_pct.get(dt_id),
+            })
+
+    return rows
+
+
+@router.post("/sandbox")
+async def run_sandbox(body: SandboxParams):
+    """
+    Interactive load flow sandbox: run with custom parameters and see OE results.
+    Does NOT affect the live load flow cache used by the dashboard.
+    """
+    import copy
+
+    dts = _enrich_dts_with_realtime(body.feeder_id)
+    ders = _enrich_ders_with_realtime(body.feeder_id)
+
+    if not dts:
+        raise HTTPException(status_code=404, detail=f"No DTs found for feeder {body.feeder_id}")
+
+    # Apply DT load overrides
+    for dt in dts:
+        if dt["id"] in body.dt_loads:
+            override_kw = body.dt_loads[dt["id"]]
+            dt["total_load_kw"] = override_kw
+            gen = dt.get("generation_kw", 0)
+            dt["net_load_kw"] = max(0, override_kw - gen)
+
+    # Apply DER generation overrides
+    for der in ders:
+        if der["der_id"] in body.der_gens:
+            der["current_kw"] = body.der_gens[der["der_id"]]
+
+    # Build sandbox config (deep copy to avoid mutating global state)
+    cfg = copy.deepcopy(get_feeder_config(body.feeder_id))
+    cfg.feeder_head_voltage_pu = body.feeder_head_voltage_pu
+    if body.conductor_type in CONDUCTOR_LIBRARY:
+        cfg.conductor_type = body.conductor_type
+    if body.dt_kva_overrides:
+        cfg.dt_kva_overrides = {**cfg.dt_kva_overrides, **body.dt_kva_overrides}
+
+    lf = run_load_flow_sandbox(body.feeder_id, dts, ders, cfg)
+    if lf.get("status") == "failed":
+        raise HTTPException(status_code=500, detail=lf.get("error", "Load flow failed"))
+
+    oe_rows = _compute_sandbox_oe(dts, ders, lf, cfg)
+
+    return {
+        "status": "ok",
+        "feeder_id": body.feeder_id,
+        "elapsed_s": lf.get("elapsed_s"),
+        "inputs": {
+            "feeder_head_voltage_pu": body.feeder_head_voltage_pu,
+            "conductor_type": body.conductor_type,
+            "conductor_label": CONDUCTOR_LIBRARY.get(body.conductor_type, {}).get("label", body.conductor_type),
+            "dt_loads_overridden": list(body.dt_loads.keys()),
+            "der_gens_overridden": list(body.der_gens.keys()),
+        },
+        "loadflow": lf,
+        "oe_per_der": oe_rows,
+        "summary": {
+            "voltage_violations": len(lf["violations"]["voltage"]),
+            "thermal_violations": len(lf["violations"]["thermal"]),
+            "ders_exceeding_oe": sum(1 for r in oe_rows if r["exceeding"]),
+            "total_ders": len(oe_rows),
         },
     }

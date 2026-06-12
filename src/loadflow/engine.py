@@ -441,3 +441,86 @@ def run_whatif(feeder_id: str, dts: list, ders: list,
         "model_source": "CIM" if cfg.use_cim_model else "assumed",
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
+
+
+# ─── Sandbox Runner (explicit config, no cache) ───────────────────────────────
+
+def run_load_flow_sandbox(feeder_id: str, dts: list, ders: list, cfg) -> dict:
+    """
+    Run load flow with explicit config — used by the interactive sandbox.
+    Identical logic to run_load_flow but does NOT update _results cache.
+    """
+    import pandapower as pp
+
+    t_start = time.time()
+
+    try:
+        net, bus_map, ordered_dts = _build_network(feeder_id, dts, ders, cfg)
+        pp.runpp(net, algorithm="bfsw", numba=False)
+    except Exception as e:
+        logger.error(f"Sandbox load flow failed for {feeder_id}: {e}")
+        return {"status": "failed", "error": str(e)}
+
+    elapsed = time.time() - t_start
+
+    bus_voltages = {}
+    for dt in ordered_dts:
+        lv_bus = bus_map.get(dt["id"])
+        if lv_bus is not None and lv_bus < len(net.res_bus):
+            vm_pu = float(net.res_bus.at[lv_bus, "vm_pu"])
+            bus_voltages[dt["id"]] = {
+                "dt_id": dt["id"],
+                "dt_name": dt.get("name", dt["id"]),
+                "order": dt.get("order", 0),
+                "vm_pu": round(vm_pu, 4),
+                "vm_v": round(vm_pu * 400, 1),
+                "violation": vm_pu > cfg.voltage_upper_pu or vm_pu < cfg.voltage_lower_pu,
+                "pre_alert": vm_pu > cfg.voltage_pre_alert_upper_pu or vm_pu < cfg.voltage_pre_alert_lower_pu,
+                "status": (
+                    "violation" if vm_pu > cfg.voltage_upper_pu or vm_pu < cfg.voltage_lower_pu
+                    else "pre_alert" if vm_pu > cfg.voltage_pre_alert_upper_pu or vm_pu < cfg.voltage_pre_alert_lower_pu
+                    else "normal"
+                ),
+            }
+
+    line_results = []
+    for idx, row in net.res_line.iterrows():
+        if idx < len(net.line):
+            line_name = net.line.at[idx, "name"]
+            max_i = float(net.line.at[idx, "max_i_ka"])
+            i_ka = float(row["i_ka"])
+            loading_pct = (i_ka / max_i * 100) if max_i > 0 else 0
+            line_results.append({
+                "line": line_name,
+                "i_ka": round(i_ka, 4),
+                "loading_pct": round(loading_pct, 1),
+                "thermal_violation": loading_pct > 100,
+            })
+
+    dt_loading = {}
+    for idx, row in net.res_trafo.iterrows():
+        if idx < len(net.trafo):
+            trafo_name = net.trafo.at[idx, "name"]
+            dt_id = trafo_name.replace("T_", "")
+            dt_loading[dt_id] = round(float(row["loading_percent"]), 1)
+
+    doc_results = _compute_doc(feeder_id, dts, ders, cfg, bus_map, ordered_dts)
+
+    return {
+        "feeder_id": feeder_id,
+        "run_label": "sandbox",
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "elapsed_s": round(elapsed, 2),
+        "model_source": "CIM" if cfg.use_cim_model else "assumed",
+        "indicative": not cfg.use_cim_model,
+        "conductor_type": cfg.conductor_type,
+        "feeder_head_voltage_pu": cfg.feeder_head_voltage_pu,
+        "bus_voltages": list(bus_voltages.values()),
+        "line_loading": line_results,
+        "dt_loading_pct": dt_loading,
+        "doc_per_der": doc_results,
+        "violations": {
+            "voltage": [v for v in bus_voltages.values() if v["violation"]],
+            "thermal": [l for l in line_results if l["thermal_violation"]],
+        },
+    }
