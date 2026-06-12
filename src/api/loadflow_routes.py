@@ -445,6 +445,44 @@ def _compute_sandbox_oe(dts: list, ders: list, lf: dict, cfg) -> list:
     return rows
 
 
+@router.get("/sandbox/init")
+async def get_sandbox_init(feeder_id: str = "LK1"):
+    """
+    Return DTs, DERs, and conductors for the sandbox tab.
+    Uses LANKA static data as ground truth — always has rows even on cold start.
+    """
+    der_cache = {d["der_id"]: d for d in fleet.get_all_ders()}
+
+    dts = [
+        {
+            "dt_id": dt["id"],
+            "dt_name": dt.get("name", dt["id"]),
+            "rated_kva": dt.get("rated_kva", 100),
+            "total_load_kw": dt.get("total_load_kw", round(dt.get("rated_kva", 100) * 0.40, 1)),
+        }
+        for dt in LANKA_DTS
+        if dt.get("feeder_id") == feeder_id
+    ]
+
+    ders = [
+        {
+            "der_id": d["der_id"],
+            "dt_id": d["dt_id"],
+            "nameplate_kw": d["nameplate_kw"],
+            "current_kw": round(der_cache.get(d["der_id"], {}).get("current_kw", 0.0), 2),
+        }
+        for d in LANKA_DERS
+        if d.get("feeder_id") == feeder_id
+    ]
+
+    return {
+        "feeder_id": feeder_id,
+        "conductors": CONDUCTOR_LIBRARY,
+        "dts": dts,
+        "ders": ders,
+    }
+
+
 @router.post("/sandbox")
 async def run_sandbox(body: SandboxParams):
     """

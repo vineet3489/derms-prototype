@@ -3722,38 +3722,40 @@ function DTScheduleView({ dtId }) {
 // ── Load Flow Sandbox ─────────────────────────────────────────────────────────
 function SandboxTab() {
   const [conductors, setConductors] = React.useState({});
-  const [ders, setDers] = React.useState([]);          // [{der_id, dt_id, nameplate_kw, current_kw}]
-  const [dtList, setDtList] = React.useState([]);      // [{dt_id, name, rated_kva, total_load_kw}]
+  const [ders, setDers] = React.useState([]);
+  const [dtList, setDtList] = React.useState([]);
   const [headVoltage, setHeadVoltage] = React.useState("1.03");
   const [conductorType, setConductorType] = React.useState("ACSR_WEASEL_80");
-  const [dtLoads, setDtLoads] = React.useState({});    // {dt_id: "kw"}
-  const [derGens, setDerGens] = React.useState({});    // {der_id: "kw"}
+  const [dtLoads, setDtLoads] = React.useState({});
+  const [derGens, setDerGens] = React.useState({});
   const [result, setResult] = React.useState(null);
   const [running, setRunning] = React.useState(false);
   const [error, setError] = React.useState(null);
   const [loaded, setLoaded] = React.useState(false);
+  const [loadError, setLoadError] = React.useState(false);
 
-  React.useEffect(() => {
-    Promise.all([
-      fetch("/api/loadflow/conductors").then(r => r.json()).catch(() => ({ conductors: {} })),
-      fetch("/api/ders?feeder_id=LK1").then(r => r.json()).catch(() => ({ ders: [] })),
-      fetch("/api/loadflow/hosting-capacity?feeder_id=LK1").then(r => r.json()).catch(() => ({ dt_hc: [] })),
-    ]).then(([condData, derData, hcData]) => {
-      setConductors(condData.conductors || {});
-      const fleetDers = (derData.ders || []).filter(d => d.feeder_id === "LK1" || !d.feeder_id);
-      setDers(fleetDers.map(d => ({ der_id: d.der_id, dt_id: d.dt_id, nameplate_kw: d.nameplate_kw || 0, current_kw: d.current_kw || 0 })));
-      const dg = {};
-      fleetDers.forEach(d => { dg[d.der_id] = String((d.current_kw || 0).toFixed(1)); });
-      setDerGens(dg);
+  const loadInit = () => {
+    setLoadError(false);
+    fetch("/api/loadflow/sandbox/init?feeder_id=LK1")
+      .then(r => r.json())
+      .then(data => {
+        setConductors(data.conductors || {});
+        const dts = data.dts || [];
+        setDtList(dts);
+        const dl = {};
+        dts.forEach(dt => { dl[dt.dt_id] = String((dt.total_load_kw || 0).toFixed(1)); });
+        setDtLoads(dl);
+        const apiDers = data.ders || [];
+        setDers(apiDers);
+        const dg = {};
+        apiDers.forEach(d => { dg[d.der_id] = String((d.current_kw || 0).toFixed(1)); });
+        setDerGens(dg);
+        setLoaded(true);
+      })
+      .catch(() => { setLoadError(true); setLoaded(true); });
+  };
 
-      const hcRows = hcData.dt_hc || [];
-      setDtList(hcRows.map(r => ({ dt_id: r.dt_id, name: r.dt_name || r.dt_id, rated_kva: r.rated_kva })));
-      const dl = {};
-      hcRows.forEach(r => { dl[r.dt_id] = String((r.rated_kva * 0.40).toFixed(1)); });
-      setDtLoads(dl);
-      setLoaded(true);
-    });
-  }, []);
+  React.useEffect(() => { loadInit(); }, []);
 
   const runSandbox = () => {
     setRunning(true); setError(null); setResult(null);
@@ -3786,18 +3788,44 @@ function SandboxTab() {
   const inp = { background: "rgba(255,255,255,0.06)", border: "1px solid var(--border)", borderRadius: 4, color: "var(--text)", padding: "3px 6px", width: 80, fontSize: 12 };
   const sel = { ...inp, width: "auto" };
 
-  if (!loaded) return <div style={{ padding: 40, color: "var(--text-muted)", textAlign: "center" }}>Loading fleet data…</div>;
+  if (!loaded) return (
+    <div style={{ padding: 40, textAlign: "center" }}>
+      <div style={{ color: "var(--text-muted)", marginBottom: 8 }}>Loading Lanka Feeder (LK1) data…</div>
+      <div style={{ fontSize: 11, color: "rgba(255,255,255,0.3)" }}>Fetching DTs, DERs and conductor library</div>
+    </div>
+  );
+
+  if (loadError) return (
+    <div style={{ padding: 40, textAlign: "center" }}>
+      <div style={{ color: "#EF4444", marginBottom: 12 }}>Failed to load init data from server.</div>
+      <button onClick={loadInit} style={{ padding: "8px 20px", background: "var(--accent)", color: "#fff", border: "none", borderRadius: 6, cursor: "pointer", fontSize: 13 }}>
+        Retry
+      </button>
+    </div>
+  );
 
   return (
     <div>
-      <div style={{ fontSize: 12, color: "var(--text-muted)", marginBottom: 14 }}>
-        Run the pandapower load flow with custom parameters. Results are isolated — they do not affect the live dashboard cache.
-        Outputs: bus voltages, DT transformer loading, and per-DER Operating Envelope.
+      {/* ── Header ── */}
+      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 14 }}>
+        <div>
+          <div style={{ fontSize: 13, fontWeight: 600, color: "var(--text)", marginBottom: 4 }}>
+            Power Flow Sandbox — Lanka Feeder (LK1)
+          </div>
+          <div style={{ fontSize: 12, color: "var(--text-muted)" }}>
+            Adjust feeder head voltage, conductor type, consumer loads, and DER generation.
+            Results are isolated — they do not update the live dashboard cache.
+          </div>
+        </div>
+        <button onClick={loadInit} title="Reload live values"
+          style={{ padding: "5px 12px", background: "rgba(255,255,255,0.06)", border: "1px solid var(--border)", borderRadius: 6, color: "var(--text-muted)", cursor: "pointer", fontSize: 11, flexShrink: 0, marginLeft: 16 }}>
+          ↺ Reload
+        </button>
       </div>
 
       {/* ── Feeder parameters ── */}
-      <div style={{ background: "rgba(255,255,255,0.04)", borderRadius: 8, padding: 14, marginBottom: 12 }}>
-        <div style={{ fontSize: 12, color: "var(--accent)", fontWeight: 600, marginBottom: 10 }}>Feeder Parameters — LK1</div>
+      <div style={{ background: "rgba(255,255,255,0.04)", borderRadius: 8, padding: 14, marginBottom: 12, border: "1px solid var(--border)" }}>
+        <div style={{ fontSize: 11, color: "var(--accent)", fontWeight: 600, marginBottom: 10, textTransform: "uppercase", letterSpacing: "0.05em" }}>Feeder Parameters</div>
         <div style={{ display: "flex", gap: 24, flexWrap: "wrap", alignItems: "center", fontSize: 12 }}>
           <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
             <span style={{ color: "var(--text-muted)" }}>Head voltage (pu)</span>
@@ -3816,24 +3844,34 @@ function SandboxTab() {
 
       {/* ── DT Consumer Loads ── */}
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 12 }}>
-        <div style={{ background: "rgba(255,255,255,0.04)", borderRadius: 8, padding: 14 }}>
-          <div style={{ fontSize: 12, color: "var(--accent)", fontWeight: 600, marginBottom: 8 }}>DT Consumer Loads (kW)</div>
-          <div style={{ fontSize: 11, color: "var(--text-muted)", marginBottom: 8 }}>Source: MDMS Pipeline A · Edit to override</div>
+        <div style={{ background: "rgba(255,255,255,0.04)", borderRadius: 8, padding: 14, border: "1px solid var(--border)" }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
+            <div style={{ fontSize: 11, fontWeight: 600, color: "var(--text)", textTransform: "uppercase", letterSpacing: "0.05em" }}>DT Consumer Loads</div>
+            <div style={{ fontSize: 10, color: "var(--text-muted)", background: "rgba(255,255,255,0.06)", padding: "2px 6px", borderRadius: 4 }}>MDMS Pipeline A</div>
+          </div>
+          {dtList.length === 0 ? (
+            <div style={{ padding: "20px 0", color: "var(--text-muted)", fontSize: 12, textAlign: "center" }}>
+              No DTs found for LK1
+            </div>
+          ) : (
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
             <thead>
-              <tr style={{ color: "var(--text-muted)" }}>
-                <th style={{ padding: "4px 6px", textAlign: "left", fontWeight: 500 }}>DT</th>
-                <th style={{ padding: "4px 6px", textAlign: "left", fontWeight: 500 }}>kVA</th>
-                <th style={{ padding: "4px 6px", textAlign: "left", fontWeight: 500 }}>Load kW</th>
+              <tr>
+                <th style={{ padding: "5px 6px", textAlign: "left", fontWeight: 500, fontSize: 11, color: "var(--text-muted)", borderBottom: "1px solid var(--border)" }}>DT Name</th>
+                <th style={{ padding: "5px 6px", textAlign: "right", fontWeight: 500, fontSize: 11, color: "var(--text-muted)", borderBottom: "1px solid var(--border)" }}>kVA</th>
+                <th style={{ padding: "5px 6px", textAlign: "right", fontWeight: 500, fontSize: 11, color: "var(--text-muted)", borderBottom: "1px solid var(--border)" }}>Load (kW)</th>
               </tr>
             </thead>
             <tbody>
               {dtList.map(dt => (
                 <tr key={dt.dt_id} style={{ borderBottom: "1px solid rgba(255,255,255,0.04)" }}>
-                  <td style={{ padding: "4px 6px", fontFamily: "monospace", color: "var(--text-muted)", fontSize: 11 }}>{dt.dt_id}</td>
-                  <td style={{ padding: "4px 6px" }}>{dt.rated_kva}</td>
-                  <td style={{ padding: "4px 6px" }}>
-                    <input style={inp} type="number" step="1" min="0"
+                  <td style={{ padding: "5px 6px" }}>
+                    <div style={{ fontSize: 12, color: "var(--text)" }}>{dt.dt_name || dt.dt_id}</div>
+                    <div style={{ fontSize: 10, color: "var(--text-muted)", fontFamily: "monospace" }}>{dt.dt_id}</div>
+                  </td>
+                  <td style={{ padding: "5px 6px", textAlign: "right", color: "var(--text-muted)", fontSize: 12 }}>{dt.rated_kva}</td>
+                  <td style={{ padding: "5px 6px", textAlign: "right" }}>
+                    <input style={{ ...inp, width: 70, textAlign: "right" }} type="number" step="1" min="0"
                       value={dtLoads[dt.dt_id] ?? ""}
                       onChange={e => setDtLoads(prev => ({ ...prev, [dt.dt_id]: e.target.value }))} />
                   </td>
@@ -3841,27 +3879,38 @@ function SandboxTab() {
               ))}
             </tbody>
           </table>
+          )}
         </div>
 
         {/* ── DER Generation Inputs ── */}
-        <div style={{ background: "rgba(255,255,255,0.04)", borderRadius: 8, padding: 14 }}>
-          <div style={{ fontSize: 12, color: "var(--accent)", fontWeight: 600, marginBottom: 8 }}>DER Generation (kW)</div>
-          <div style={{ fontSize: 11, color: "var(--text-muted)", marginBottom: 8 }}>Source: MDMS Pipeline C · Edit to override</div>
+        <div style={{ background: "rgba(255,255,255,0.04)", borderRadius: 8, padding: 14, border: "1px solid var(--border)" }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
+            <div style={{ fontSize: 11, fontWeight: 600, color: "var(--text)", textTransform: "uppercase", letterSpacing: "0.05em" }}>DER Generation</div>
+            <div style={{ fontSize: 10, color: "var(--text-muted)", background: "rgba(255,255,255,0.06)", padding: "2px 6px", borderRadius: 4 }}>MDMS Pipeline C</div>
+          </div>
+          {ders.length === 0 ? (
+            <div style={{ padding: "20px 0", color: "var(--text-muted)", fontSize: 12, textAlign: "center" }}>
+              No DERs found for LK1
+            </div>
+          ) : (
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
             <thead>
-              <tr style={{ color: "var(--text-muted)" }}>
-                <th style={{ padding: "4px 6px", textAlign: "left", fontWeight: 500 }}>DER</th>
-                <th style={{ padding: "4px 6px", textAlign: "left", fontWeight: 500 }}>Plate</th>
-                <th style={{ padding: "4px 6px", textAlign: "left", fontWeight: 500 }}>Gen kW</th>
+              <tr>
+                <th style={{ padding: "5px 6px", textAlign: "left", fontWeight: 500, fontSize: 11, color: "var(--text-muted)", borderBottom: "1px solid var(--border)" }}>DER ID</th>
+                <th style={{ padding: "5px 6px", textAlign: "right", fontWeight: 500, fontSize: 11, color: "var(--text-muted)", borderBottom: "1px solid var(--border)" }}>Plate</th>
+                <th style={{ padding: "5px 6px", textAlign: "right", fontWeight: 500, fontSize: 11, color: "var(--text-muted)", borderBottom: "1px solid var(--border)" }}>Gen (kW)</th>
               </tr>
             </thead>
             <tbody>
               {ders.map(d => (
                 <tr key={d.der_id} style={{ borderBottom: "1px solid rgba(255,255,255,0.04)" }}>
-                  <td style={{ padding: "4px 6px", fontFamily: "monospace", color: "var(--text-muted)", fontSize: 11 }}>{d.der_id}</td>
-                  <td style={{ padding: "4px 6px" }}>{d.nameplate_kw} kW</td>
-                  <td style={{ padding: "4px 6px" }}>
-                    <input style={inp} type="number" step="0.1" min="0" max={d.nameplate_kw}
+                  <td style={{ padding: "5px 6px" }}>
+                    <div style={{ fontSize: 11, fontFamily: "monospace", color: "var(--text)" }}>{d.der_id}</div>
+                    <div style={{ fontSize: 10, color: "var(--text-muted)" }}>{d.dt_id}</div>
+                  </td>
+                  <td style={{ padding: "5px 6px", textAlign: "right", color: "var(--text-muted)", fontSize: 12 }}>{d.nameplate_kw} kW</td>
+                  <td style={{ padding: "5px 6px", textAlign: "right" }}>
+                    <input style={{ ...inp, width: 70, textAlign: "right" }} type="number" step="0.1" min="0" max={d.nameplate_kw}
                       value={derGens[d.der_id] ?? ""}
                       onChange={e => setDerGens(prev => ({ ...prev, [d.der_id]: e.target.value }))} />
                   </td>
@@ -3869,14 +3918,20 @@ function SandboxTab() {
               ))}
             </tbody>
           </table>
+          )}
         </div>
       </div>
 
       {/* ── Run button ── */}
-      <button onClick={runSandbox} disabled={running}
-        style={{ padding: "9px 28px", background: running ? "var(--text-muted)" : "var(--accent)", color: "#fff", border: "none", borderRadius: 6, cursor: running ? "default" : "pointer", fontSize: 13, fontWeight: 600, marginBottom: 16 }}>
-        {running ? "⏳ Running pandapower…" : "▶ Run Load Flow"}
-      </button>
+      <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 16 }}>
+        <button onClick={runSandbox} disabled={running || (dtList.length === 0 && ders.length === 0)}
+          style={{ padding: "9px 28px", background: (running || (dtList.length === 0 && ders.length === 0)) ? "var(--text-muted)" : "var(--accent)", color: "#fff", border: "none", borderRadius: 6, cursor: (running || (dtList.length === 0 && ders.length === 0)) ? "default" : "pointer", fontSize: 13, fontWeight: 600 }}>
+          {running ? "⏳ Running pandapower…" : "▶ Run Load Flow"}
+        </button>
+        <div style={{ fontSize: 11, color: "var(--text-muted)" }}>
+          {dtList.length} DTs · {ders.length} DERs · pandapower BFS solver
+        </div>
+      </div>
 
       {error && (
         <div style={{ background: "rgba(239,68,68,0.12)", border: "1px solid rgba(239,68,68,0.3)", borderRadius: 8, padding: 12, marginBottom: 12, fontSize: 12, color: "#EF4444" }}>
