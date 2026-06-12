@@ -94,6 +94,56 @@ async def trigger_dr_event(data: dict):
     return event
 
 
+@router.post("/register")
+async def register_der_manually(data: dict):
+    """
+    Manually register a DER in the fleet.
+    Use when MDMS data is not yet available or the DER has no counterparty API.
+    Operator-entered details; performance data can be added later via MDMS API.
+    """
+    import uuid
+    from datetime import datetime, timezone
+
+    required = ["feeder_id", "dt_id", "der_type", "nameplate_kw"]
+    for f in required:
+        if not data.get(f):
+            from fastapi import HTTPException
+            raise HTTPException(400, f"'{f}' is required")
+
+    der_id = data.get("der_id") or f"MAN-{str(uuid.uuid4())[:8].upper()}"
+    now_iso = datetime.now(timezone.utc).isoformat()
+
+    fleet._der_cache[der_id] = {
+        "der_id": der_id,
+        "aggregator_id": data.get("aggregator_id", "MANUAL"),
+        "feeder_id": data["feeder_id"],
+        "dt_id": data["dt_id"],
+        "der_type": data["der_type"],
+        "nameplate_kw": float(data["nameplate_kw"]),
+        "location_name": data.get("location_name", data["dt_id"]),
+        "status": data.get("status", "Online"),
+        "current_kw": float(data.get("current_kw", 0)),
+        "current_kvar": 0.0,
+        "voltage_v": 230.0,
+        "soc_pct": None,
+        "cuf_pct": 0.0,
+        "pr_pct": 0.0,
+        "available_kw": float(data["nameplate_kw"]),
+        "curtailment_pct": 0.0,
+        "lat": float(data.get("lat", 25.27)),
+        "lng": float(data.get("lng", 82.99)),
+        "consumer_id": data.get("consumer_id", ""),
+        "meter_id": data.get("meter_id", ""),
+        "commission_date": data.get("commission_date"),
+        "metering_type": data.get("metering_type", "NET"),
+        "monthly_kwh": data.get("monthly_kwh"),
+        "data_source": "manual",
+        "notes": data.get("notes", ""),
+        "last_update": now_iso,
+    }
+    return {"status": "registered", "der_id": der_id, "der": fleet._der_cache[der_id]}
+
+
 @router.get("/dispatch/dr-events")
 async def get_dr_events():
     """List DR events."""

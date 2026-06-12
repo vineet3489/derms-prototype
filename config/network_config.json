@@ -1,0 +1,28 @@
+{
+  "default_conductor_type": "ACSR_WEASEL_80",
+  "default_feeder_head_voltage_pu": 1.0,
+  "default_dt_transformer_z_pct": 4.5,
+  "diversity_factor": 0.8,
+  "power_factor": 0.95,
+  "hc_green_pct": 60.0,
+  "hc_amber_pct": 85.0,
+  "feeders": {
+    "LK1": {
+      "feeder_id": "LK1",
+      "conductor_type": "ACSR_WEASEL_80",
+      "custom_r_ohm_per_km": null,
+      "custom_x_ohm_per_km": null,
+      "custom_max_current_a": null,
+      "feeder_head_voltage_pu": 1.0,
+      "dt_transformer_z_pct": 4.5,
+      "voltage_upper_pu": 1.06,
+      "voltage_lower_pu": 0.94,
+      "voltage_pre_alert_upper_pu": 1.04,
+      "voltage_pre_alert_lower_pu": 0.96,
+      "doc_sweep_step_kw": 0.1,
+      "use_cim_model": false,
+      "cim_xml_path": null,
+      "dt_kva_overrides": {}
+    }
+  }
+}

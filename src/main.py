@@ -185,6 +185,8 @@ from src.api.forecast_routes import router as forecast_router
 from src.api.program_routes import router as program_router
 from src.integrations.adms.simulator import router as adms_sim_router
 from src.integrations.ieee2030_5.server import router as ieee_router
+from src.integrations.counterparty.simulator import router as cp_sim_router
+from src.api.counterparty_routes import router as cp_router
 
 app.include_router(der_router)
 app.include_router(adms_router)
@@ -198,6 +200,8 @@ app.include_router(forecast_router)
 app.include_router(program_router)
 app.include_router(adms_sim_router)
 app.include_router(ieee_router)
+app.include_router(cp_sim_router)
+app.include_router(cp_router)
 
 # ─── Static Files & Dashboard ─────────────────────────────────────────────────
 
