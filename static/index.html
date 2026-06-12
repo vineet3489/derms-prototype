@@ -4780,7 +4780,6 @@ function App() {
     { id: "integrations",    icon: "🔌", label: "Integrations" },
     { id: "planning",        icon: "🗺️", label: "Planning & HC" },
     { id: "alerts",          icon: "🔔", label: "Monitoring & Alerts" },
-    { id: "scheduling",      icon: "📅", label: "Scheduling" },
     { id: "demand-response", icon: "📉", label: "Demand Response" },
     { id: "oe-monitor",      icon: "🔁", label: "OE Monitor (Ph.2)" },
     { id: "analytics",       icon: "🤖", label: "Analytics & Reports" },
@@ -4856,7 +4855,6 @@ function App() {
           {screen === "integrations"   && <IntegrationScreen />}
           {screen === "oe-monitor"     && <OEMonitorScreen />}
           {screen === "planning"       && <PlanningScreen ders={ders} summary={summary} />}
-          {screen === "scheduling"     && <SchedulingScreen ders={ders} />}
           {screen === "demand-response" && <DemandResponseScreen ders={ders} summary={summary} />}
           {screen === "alerts"         && <AlertsScreen />}
           {screen === "analytics"      && <AnalyticsScreen ders={ders} genProfile={genProfile} />}
