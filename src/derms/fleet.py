@@ -531,7 +531,8 @@ def get_fleet_summary() -> dict:
     ders = list(_der_cache.values())
     solar_ders = [d for d in ders if "Solar" in d.get("der_type", "")]
     online_ders = [d for d in ders if d.get("status") == "Online"]
-    total_gen = sum(d.get("current_kw", 0) for d in ders if d.get("current_kw", 0) > 0)
+    total_gen = sum(d.get("generation_kw", d.get("current_kw", 0)) for d in ders if d.get("generation_kw", d.get("current_kw", 0)) > 0)
+    total_export = sum(d.get("export_kw", d.get("current_kw", 0)) for d in ders if d.get("export_kw", d.get("current_kw", 0)) > 0)
     total_cap = sum(d.get("nameplate_kw", 0) for d in ders)
     curtailed = [d for d in ders if d.get("curtailment_pct", 100) < 100]
 
@@ -582,6 +583,7 @@ def get_fleet_summary() -> dict:
         "degraded_ders": len([d for d in ders if d.get("status") == "Degraded"]),
         "curtailed_ders": len(curtailed),
         "total_generation_kw": round(total_gen, 2),
+        "total_export_kw": round(total_export, 2),
         "total_capacity_kw": round(total_cap, 2),
         "system_cuf_pct": round(avg_cuf, 1),
         "active_alerts": len(active_alerts),

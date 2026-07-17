@@ -154,13 +154,18 @@ async def offline_detection_loop():
 
 async def real_pilot_simulation_loop():
     """
-    Drive simulated 15-min generation for real Lanka Feeder DERs.
-    Uses irradiance model (sin curve, IST timezone) to compute
-    per-DER current_kw from nameplate capacity — mimics what real
-    MDMS 15-min data would provide. Replace with MDMS API polling
-    when 15-min interval data becomes available.
+    Drive simulated 15-min MDMS data for real Lanka Feeder DERs.
+
+    Mimics the three channels that MDMS receives from solar metering:
+      generation_kw  — gross panel output (solar meter generation channel)
+      export_kw      — net grid injection = max(0, generation - self_consumption)
+      import_kw      — grid draw = max(0, self_consumption - generation)
+
+    current_kw = export_kw kept for backward compatibility with load flow SGEN nodes.
+    Replace with real MDMS 15-min API polling when available.
     """
     import math
+    import random
     from src.data.real_pilot_data import LANKA_DERS
 
     logger.info("Real pilot simulation loop started (Lanka Feeder LK1)")
@@ -175,9 +180,7 @@ async def real_pilot_simulation_loop():
             # Irradiance factor: sin curve, 6am–6pm IST
             if 6 <= hour_ist <= 18:
                 solar_factor = max(0.0, math.sin(math.pi * (hour_ist - 6) / 12))
-                # Add realistic variability (cloud cover ±10%)
-                import random
-                solar_factor *= random.uniform(0.88, 0.98)
+                solar_factor *= random.uniform(0.88, 0.98)   # Cloud cover variability
             else:
                 solar_factor = 0.0
 
@@ -186,16 +189,34 @@ async def real_pilot_simulation_loop():
                 if der_id not in fleet._der_cache:
                     continue
                 nameplate = der_data["nameplate_kw"]
-                current_kw = round(nameplate * solar_factor, 2)
-                fleet._der_cache[der_id]["current_kw"] = current_kw
+
+                # Gross solar panel output (what solar meter generation channel measures)
+                generation_kw = round(nameplate * solar_factor, 2)
+
+                # Household self-consumption: ~1.5–3 kW during day, ~0.3–0.8 kW at night
+                if solar_factor > 0:
+                    self_consumption_kw = round(random.uniform(1.5, 3.0), 2)
+                else:
+                    self_consumption_kw = round(random.uniform(0.3, 0.8), 2)
+
+                # Net flows derived from generation vs consumption
+                export_kw = round(max(0.0, generation_kw - self_consumption_kw), 2)
+                import_kw = round(max(0.0, self_consumption_kw - generation_kw), 2)
+
+                fleet._der_cache[der_id]["generation_kw"] = generation_kw
+                fleet._der_cache[der_id]["export_kw"] = export_kw
+                fleet._der_cache[der_id]["import_kw"] = import_kw
+                fleet._der_cache[der_id]["self_consumption_kw"] = self_consumption_kw
+                # current_kw = net grid injection (used by load flow SGEN nodes)
+                fleet._der_cache[der_id]["current_kw"] = export_kw
                 fleet._der_cache[der_id]["status"] = "Online"
                 fleet._der_cache[der_id]["last_update"] = now.isoformat()
 
                 if nameplate > 0:
-                    cuf = (current_kw / nameplate) * 100
+                    cuf = (generation_kw / nameplate) * 100
                     fleet._der_cache[der_id]["cuf_pct"] = round(cuf, 1)
                     fleet._der_cache[der_id]["pr_pct"] = round(
-                        (current_kw / (nameplate * solar_factor) * 100) if solar_factor > 0 else 100.0, 1
+                        (generation_kw / (nameplate * solar_factor) * 100) if solar_factor > 0 else 100.0, 1
                     )
 
             # Auto-run load flow for LK1 — offloaded to thread pool so it

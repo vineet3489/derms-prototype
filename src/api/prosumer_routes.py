@@ -104,6 +104,10 @@ async def prosumer_dashboard(consumer_id: str):
         "metering_type": der_data.get("metering_type", "NET"),
         "status": live.get("status", "Online"),
         "current_kw": live.get("current_kw", 0.0),
+        "generation_kw": live.get("generation_kw", live.get("current_kw", 0.0)),
+        "export_kw": live.get("export_kw", live.get("current_kw", 0.0)),
+        "import_kw": live.get("import_kw", 0.0),
+        "self_consumption_kw": live.get("self_consumption_kw", 0.0),
 
         "today": {
             "gen_kwh": round(today_kwh, 2),

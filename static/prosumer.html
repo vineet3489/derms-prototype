@@ -358,8 +358,16 @@ function DashboardScreen({ consumerId, data, bills, onLogout }) {
           <span style={{ width: 10, height: 10, borderRadius: "50%", background: statusColor, display: "inline-block" }}></span>
           <span style={{ fontWeight: 600 }}>{data.status}</span>
           <span style={{ color: "var(--solar)", fontWeight: 600, marginLeft: 8 }}>
-            Now: {(data.current_kw || 0).toFixed(1)} kW {data.metering_type === "GROSS" ? "generating" : "net export"}
+            ☀️ Generating: {(data.generation_kw || data.current_kw || 0).toFixed(1)} kW
           </span>
+          <span style={{ color: "var(--cyan)", fontWeight: 600, marginLeft: 6 }}>
+            ⚡ Exporting: {(data.export_kw || data.current_kw || 0).toFixed(1)} kW
+          </span>
+          {(data.import_kw || 0) > 0 && (
+            <span style={{ color: "var(--warning)", fontWeight: 600, marginLeft: 6 }}>
+              ↓ Grid import: {(data.import_kw).toFixed(1)} kW
+            </span>
+          )}
           {prLow && <span style={{ background: "rgba(245,158,11,0.15)", color: "var(--warning)", border: "1px solid rgba(245,158,11,0.3)", borderRadius: 6, padding: "2px 10px", fontSize: 11 }}>⚠ System may be underperforming</span>}
         </div>
         <div className="stat-row">
@@ -371,14 +379,14 @@ function DashboardScreen({ consumerId, data, bills, onLogout }) {
 
       <div className="kpi-grid">
         <div className="kpi-card">
-          <div className="kpi-label">{exportLabel}</div>
+          <div className="kpi-label">Generation Today (Gross)</div>
           <div className="kpi-value" style={{color:"var(--solar)"}}>{today.gen_kwh}<span style={{fontSize:14,color:"var(--text-muted)",marginLeft:4}}>kWh</span></div>
-          <div className="kpi-sub">Peak: {today.peak_kw} kW</div>
+          <div className="kpi-sub">Peak: {today.peak_kw} kW · from solar meter</div>
         </div>
         <div className="kpi-card">
-          <div className="kpi-label">This Month</div>
-          <div className="kpi-value" style={{color:"var(--success)"}}>{this_month.gen_kwh}<span style={{fontSize:14,color:"var(--text-muted)",marginLeft:4}}>kWh</span></div>
-          <div className="kpi-sub">Export: {this_month.export_kwh} kWh · Credit: ₹{this_month.net_credit_inr.toFixed(0)}</div>
+          <div className="kpi-label">Net Export Today</div>
+          <div className="kpi-value" style={{color:"var(--cyan)"}}>{this_month.export_kwh}<span style={{fontSize:14,color:"var(--text-muted)",marginLeft:4}}>kWh</span></div>
+          <div className="kpi-sub">Grid injection · Credit: ₹{this_month.net_credit_inr.toFixed(0)}</div>
         </div>
         <div className="kpi-card" style={{borderColor: prLow ? "var(--warning)" : "var(--border)"}}>
           <div className="kpi-label">Performance Ratio</div>

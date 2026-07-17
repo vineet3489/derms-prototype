@@ -552,73 +552,109 @@ function DTDrilldownModal({ dtId, onClose }) {
 function DashboardScreen({ summary, genProfile, ders }) {
   const [dtDrilldown, setDtDrilldown] = React.useState(null);
   const [oeSummary, setOeSummary] = React.useState(null);
+  const [drActiveCount, setDrActiveCount] = React.useState(0);
+  const [mdmsStale, setMdmsStale] = React.useState(false);
 
   React.useEffect(() => {
     fetch("/api/oe/summary").then(r => r.json()).then(setOeSummary).catch(() => {});
-  }, []);
+    apiFetch("/api/ders/dispatch/dr-events").then(d => setDrActiveCount((d?.events || []).filter(e => e.status === "Active").length));
+    // Check MDMS freshness — stale if any DER last_update > 30 min ago
+    const oldest = (ders || []).reduce((min, d) => {
+      if (!d.last_update) return min;
+      const t = new Date(d.last_update).getTime();
+      return t < min ? t : min;
+    }, Date.now());
+    setMdmsStale(Date.now() - oldest > 30 * 60 * 1000);
+  }, [ders]);
 
   if (!summary) return <div className="loading">Loading dashboard...</div>;
-  const { total_ders, online_ders, offline_ders, curtailed_ders, total_generation_kw,
+  const { total_ders, online_ders, offline_ders, curtailed_ders, total_generation_kw, total_export_kw,
     total_capacity_kw, system_cuf_pct, active_alerts, feeders, recent_alerts,
     adms_sync_status, ieee_aggregators_online, active_der_controls, distribution_transformers } = summary;
 
-  const cuf_display = total_capacity_kw > 0 ? system_cuf_pct : 0;
+  const pendingApprovals = (ders || []).filter(d => d.lifecycle_status === "PENDING_APPROVAL" || d.status === "Pending").length;
+  const dtsInRed = (distribution_transformers || []).filter(dt => ((dt.total_der_kw || 0) / ((dt.rated_kva || 100) * 0.95 * 0.80)) > 0.85).length;
+  const installedKwp = (ders || []).reduce((s, d) => s + (d.nameplate_kw || 0), 0);
+  const estGenToday = (ders || []).filter(d => d.status === "Online").reduce((s, d) => s + (d.generation_kw || d.current_kw || 0) * 5, 0); // approx 5h sun
 
   return (
     <div>
       {dtDrilldown && <DTDrilldownModal dtId={dtDrilldown} onClose={() => setDtDrilldown(null)} />}
 
-      {/* KPI strip — per PRD G.1 */}
-      <div className="kpi-grid">
-        <KpiCard label="DERs Registered / Active" value={`${total_ders || 0} / ${online_ders || 0}`} sub={`${offline_ders || 0} offline · ${curtailed_ders || 0} curtailed`} color="var(--success)" icon="⚡" />
-        <KpiCard label="Net DT Export" value={(total_generation_kw || 0).toFixed(1)} unit="kW" sub="Aggregate across pilot feeders" color="var(--solar)" icon="☀️" />
-        <KpiCard label="DTs with P1 Alerts" value={oeSummary ? oeSummary.rpf_dts + (oeSummary.oe_exceeding_dts || 0) : 0} sub="Voltage / overload violations" color={(oeSummary?.rpf_dts || 0) > 0 ? "var(--danger)" : "var(--success)"} icon="🏗️" />
-        <KpiCard label="HC Red DTs" value={(distribution_transformers || []).filter(dt => ((dt.total_der_kw || 0) / ((dt.rated_kva || 100) * 0.95 * 0.80)) > 0.85).length} sub="HC utilised > 85%" color="var(--danger)" icon="🔴" />
-        <KpiCard label="Open P1 Alerts" value={(recent_alerts || []).filter(a => !a.resolved && a.priority === "HIGH").length} sub="Unresolved HIGH priority" color={(recent_alerts || []).filter(a => !a.resolved && a.priority === "HIGH").length > 0 ? "var(--danger)" : "var(--success)"} icon="🔔" />
+      {/* MDMS stale banner */}
+      {mdmsStale && (
+        <div style={{ background: "rgba(245,158,11,0.12)", border: "1px solid rgba(245,158,11,0.4)", borderRadius: 8, padding: "8px 16px", marginBottom: 10, fontSize: 12, color: "var(--warning)" }}>
+          ⏱ MDMS data has not refreshed in over 30 minutes — estimated values may be outdated
+        </div>
+      )}
+
+      {/* 8 KPI cards — per PRD Section 6.1 */}
+      <div className="kpi-grid" style={{ gridTemplateColumns: "repeat(4,1fr)" }}>
+        <KpiCard label="Active DERs" value={online_ders || 0} sub={`of ${total_ders || 0} registered · ${offline_ders || 0} offline`} color="var(--success)" icon="⚡" />
+        <KpiCard label="Installed kWp" value={installedKwp.toFixed(0)} unit="kWp" sub="Total nameplate capacity" color="var(--cyan)" icon="🔋" />
+        <KpiCard label="Est. Gen Now" value={(total_generation_kw || 0).toFixed(1)} unit="kW" sub={<span style={{ fontStyle: "italic", color: "var(--text-muted)", fontSize: 10 }}>Estimated · Net export: {(total_export_kw || 0).toFixed(1)} kW</span>} color="var(--solar)" icon="☀️" />
+        <KpiCard label="Est. Gen Today" value={estGenToday.toFixed(0)} unit="kWh" sub={<span style={{ fontStyle: "italic", color: "var(--text-muted)", fontSize: 10 }}>Estimated · irradiance model</span>} color="var(--solar)" icon="📈" />
+      </div>
+      <div className="kpi-grid" style={{ gridTemplateColumns: "repeat(4,1fr)", marginTop: 8 }}>
+        <KpiCard label="DTs in Red" value={dtsInRed} sub="HC utilised > 85%" color={dtsInRed > 0 ? "var(--danger)" : "var(--success)"} icon="🔴" />
+        <KpiCard label="Pending Approvals" value={pendingApprovals} sub="DER applications awaiting HC check" color={pendingApprovals > 0 ? "var(--warning)" : "var(--text-muted)"} icon="⏳" />
+        <KpiCard label="Active DR Events" value={drActiveCount} sub="Live demand response events" color={drActiveCount > 0 ? "var(--accent)" : "var(--text-muted)"} icon="📉" />
+        <KpiCard label="Active Alarms" value={active_alerts || 0} sub={(recent_alerts || []).filter(a => !a.resolved && a.priority === "HIGH").length + " HIGH priority unacknowledged"} color={(active_alerts || 0) > 0 ? "var(--danger)" : "var(--success)"} icon="🔔" />
       </div>
 
       {/* OE status banner if issues */}
       {oeSummary && (oeSummary.rpf_dts > 0 || oeSummary.ders_exceeding_oe > 0) && (
-        <div style={{ background: "rgba(239,68,68,0.12)", border: "1px solid rgba(239,68,68,0.35)", borderRadius: 8, padding: "10px 16px", marginBottom: 12, fontSize: 13, color: "#FCA5A5", display: "flex", gap: 16, flexWrap: "wrap" }}>
+        <div style={{ background: "rgba(239,68,68,0.12)", border: "1px solid rgba(239,68,68,0.35)", borderRadius: 8, padding: "10px 16px", marginBottom: 12, fontSize: 13, color: "#FCA5A5", display: "flex", gap: 16, flexWrap: "wrap", marginTop: 12 }}>
           <span>⚠️ <b>Grid Conditions:</b></span>
           {oeSummary.rpf_dts > 0 && <span>🔴 RPF detected on <b>{oeSummary.rpf_dts} DT(s)</b></span>}
           {oeSummary.ders_exceeding_oe > 0 && <span>🟠 <b>{oeSummary.ders_exceeding_oe} DER(s)</b> exceeding OE limit</span>}
-          <span style={{ marginLeft: "auto", color: "var(--text-muted)", fontSize: 11 }}>Click DT on map for drill-down · See OE Monitor screen for details</span>
+          <span style={{ marginLeft: "auto", color: "var(--text-muted)", fontSize: 11 }}>See OE Monitor for details</span>
         </div>
       )}
 
-      <div className="row row-4" style={{ marginBottom: 16 }}>
+      <div className="row row-4" style={{ marginBottom: 16, marginTop: 12 }}>
         <div className="card" style={{ minHeight: 340 }}>
-          <div className="card-title">🗺️ DER Fleet GIS — Lanka Feeder LK1 <span style={{ fontSize: 10, color: "var(--text-muted)" }}>(click DT for drill-down)</span></div>
+          <div className="card-title">🗺️ DER Fleet — Lanka Feeder LK1 <span style={{ fontSize: 10, color: "var(--text-muted)" }}>(click DT for drill-down)</span></div>
           <LeafletMap ders={ders} dts={distribution_transformers} height={300} onDTClick={setDtDrilldown} />
         </div>
-        <div className="card">
-          <div className="card-title">🔔 Active Alerts</div>
-          <AlertsList alerts={recent_alerts} />
+        <div className="card" style={{ overflow: "auto" }}>
+          <div className="card-title">🔔 Active Alarms <span style={{ fontSize: 11, fontWeight: 400, color: "var(--text-muted)" }}>— last 10 unacknowledged</span></div>
+          {(recent_alerts || []).filter(a => !a.resolved).length === 0 ? (
+            <div style={{ textAlign: "center", padding: "32px 16px", color: "var(--success)" }}>
+              <div style={{ fontSize: 28, marginBottom: 8 }}>✅</div>
+              <div style={{ fontWeight: 600 }}>No active alarms</div>
+              <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 4 }}>All systems normal</div>
+            </div>
+          ) : (
+            <AlertsList alerts={recent_alerts} />
+          )}
         </div>
       </div>
 
       <div className="row row-3">
         <div className="card">
-          <div className="card-title">📈 24-Hour Generation Profile</div>
+          <div className="card-title">☀️ 24-Hour Est. Generation Profile <span style={{ fontSize: 10, fontStyle: "italic", color: "var(--text-muted)" }}>Estimated</span></div>
           {genProfile && genProfile.data && (
             <SvgLineChart
               data={genProfile.data.slice(-48).map(d => ({ ...d, label: d.time }))}
               lines={[
-                { key: "solar_kw", label: "Solar kW", color: "#FCD34D", fill: "#FCD34D" },
-                { key: "load_kw",  label: "Load kW",  color: "#60A5FA", dash: "5 5" },
-                { key: "clear_sky_kw", label: "Clear Sky", color: "#8B9CB8", dash: "3 3" },
+                { key: "solar_kw", label: "Est. Solar (kW)", color: "#FCD34D", fill: "#FCD34D" },
+                { key: "load_kw",  label: "Net Load (kW)",  color: "#60A5FA", dash: "5 5" },
+                { key: "clear_sky_kw", label: "Clear-sky Ref", color: "#8B9CB8", dash: "3 3" },
               ]}
               height={200}
             />
           )}
+          <div style={{ fontSize: 10, fontStyle: "italic", color: "var(--text-muted)", marginTop: 4 }}>
+            ℹ Estimated from installed kWp × irradiance model (NASA POWER). Not a direct inverter reading.
+          </div>
         </div>
         <div className="card">
           <div className="card-title">⚡ Feeder Loading & Hosting Capacity</div>
           {(feeders || []).map(f => <FeederBar key={f.feeder_id} feeder={f} />)}
           <div style={{ marginTop: 12, fontSize: 11, color: "var(--text-muted)" }}>
-            <div style={{ marginBottom: 4 }}>🔗 ADMS Integration: <span style={{ color: adms_sync_status === "Connected" ? "var(--success)" : "var(--danger)" }}>{adms_sync_status}</span></div>
-            <div>Protocol: CIM XML (IEC 61970-452) + REST · GE ADMS Simulated</div>
+            <div style={{ marginBottom: 4 }}>🔗 MDMS Integration: <span style={{ color: adms_sync_status === "Connected" ? "var(--success)" : "var(--danger)" }}>{adms_sync_status}</span></div>
+            <div>IEEE 2030.5 aggregators: {ieee_aggregators_online || 0} online</div>
           </div>
         </div>
       </div>
@@ -628,7 +664,7 @@ function DashboardScreen({ summary, genProfile, ders }) {
 
 // ─── DER Fleet Screen ─────────────────────────────────────────────────────────
 
-function DERFleetScreen({ ders }) {
+function DERFleetScreen({ ders, summary }) {
   const [view, setView] = useState("table");
   const [selected, setSelected] = useState(null);
   const [filterFeeder, setFilterFeeder] = useState("All");
@@ -643,18 +679,19 @@ function DERFleetScreen({ ders }) {
     (filterType === "All" || d.der_type === filterType)
   );
 
-  const totalGen = filtered.reduce((s, d) => s + (d.current_kw > 0 ? d.current_kw : 0), 0);
+  const totalGen = filtered.reduce((s, d) => s + (d.generation_kw > 0 ? d.generation_kw : (d.current_kw > 0 ? d.current_kw : 0)), 0);
+  const totalExport = filtered.reduce((s, d) => s + (d.export_kw != null ? d.export_kw : (d.current_kw > 0 ? d.current_kw : 0)), 0);
   const totalCap = filtered.reduce((s, d) => s + d.nameplate_kw, 0);
   const avgPR = filtered.filter(d => d.pr_pct > 0).reduce((s, d) => s + d.pr_pct, 0) / (filtered.filter(d => d.pr_pct > 0).length || 1);
 
   return (
     <div>
       <div className="kpi-grid" style={{ gridTemplateColumns: "repeat(5,1fr)" }}>
-        <KpiCard label="Registered" value={filtered.length} sub="DRAFT+PENDING+ACTIVE" icon="🔋" />
-        <KpiCard label="Active" value={filtered.filter(d => d.status === "Online" || d.lifecycle_status === "ACTIVE").length} color="var(--success)" icon="✅" sub="Confirmed grid-connected" />
-        <KpiCard label="Pending Approval" value={filtered.filter(d => d.lifecycle_status === "PENDING_APPROVAL" || d.status === "Pending").length} color="var(--warning)" icon="⏳" sub="HC pre-check done" />
-        <KpiCard label="Generation Now" value={totalGen.toFixed(1)} unit="kW" sub={`of ${totalCap.toFixed(0)}kW installed`} color="var(--solar)" icon="☀️" />
-        <KpiCard label="Avg PR" value={avgPR.toFixed(1)} unit="%" color="var(--cyan)" icon="📊" sub="Performance Ratio" />
+        <KpiCard label="Registered" value={filtered.length} sub={`${filtered.filter(d=>d.status==="Online").length} active · ${filtered.filter(d=>d.status==="Pending"||d.lifecycle_status==="PENDING_APPROVAL").length} pending`} icon="🔋" />
+        <KpiCard label="Installed Capacity" value={totalCap.toFixed(0)} unit="kWp" sub="Total nameplate (active + pending)" color="var(--cyan)" icon="📐" />
+        <KpiCard label="Est. Gen Now" value={totalGen.toFixed(1)} unit="kW" sub={<span style={{ fontStyle: "italic", fontSize: 10 }}>Estimated · irradiance model</span>} color="var(--solar)" icon="☀️" />
+        <KpiCard label="Net Export Now" value={totalExport.toFixed(1)} unit="kW" sub="Grid injection (MDMS export channel)" color="var(--accent)" icon="⚡" />
+        <KpiCard label="Avg PR" value={avgPR.toFixed(1)} unit="%" color={avgPR > 65 ? "var(--success)" : "var(--warning)"} icon="📊" sub={avgPR < 65 ? "⚠ Below 65% — review systems" : "Performance Ratio"} />
       </div>
 
       {showRegister && <RegisterDERModal onClose={() => setShowRegister(false)} onDone={(id) => alert(`✅ DER ${id} registered — reload page to see updated fleet`)} />}
@@ -674,6 +711,9 @@ function DERFleetScreen({ ders }) {
         <button onClick={() => setShowRegister(true)} style={{ marginLeft: "auto", padding: "7px 14px", background: "rgba(99,102,241,0.12)", border: "1px solid rgba(99,102,241,0.3)", color: "var(--accent)", borderRadius: 6, cursor: "pointer", fontSize: 12, fontWeight: 600 }}>
           + Register DER Manually
         </button>
+        <button onClick={() => { const csv = ["Prosumer Name,Consumer No,DT,Feeder,kWp,Status"].concat(filtered.map(d => [d.consumer_name||d.location_name||d.der_id,d.consumer_id||"",d.dt_id,d.feeder_id,d.nameplate_kw,d.status].join(","))).join("\n"); const a=document.createElement("a"); a.href="data:text/csv,"+encodeURIComponent(csv); a.download="der_fleet.csv"; a.click(); }} style={{ padding: "7px 14px", background: "rgba(16,185,129,0.1)", border: "1px solid rgba(16,185,129,0.3)", color: "var(--success)", borderRadius: 6, cursor: "pointer", fontSize: 12, fontWeight: 600 }}>
+          ⬇ Export to Excel
+        </button>
       </div>
 
       <div className="row" style={{ gridTemplateColumns: selected ? "1.5fr 1fr" : "1fr", marginBottom: 0 }}>
@@ -681,25 +721,40 @@ function DERFleetScreen({ ders }) {
           {view === "table" ? (
             <table>
               <thead><tr>
-                <th>DER ID</th><th>Type</th><th>Location</th><th>Capacity</th>
-                <th>Metering</th><th>Now (kW)</th><th>CUF%</th><th>DT</th><th>Lifecycle</th><th>Status</th>
+                <th>Prosumer Name</th><th>Consumer No.</th><th>DT</th><th>Feeder</th><th>kWp</th>
+                <th>Status</th><th>Last MDMS</th><th>Est. Gen Today</th><th>HC%</th>
               </tr></thead>
               <tbody>
                 {filtered.map(d => {
+                  const genKw = d.generation_kw != null ? d.generation_kw : d.current_kw;
                   const lcStatus = d.lifecycle_status || (d.status === "Online" ? "ACTIVE" : d.status === "Pending" ? "PENDING_APPROVAL" : "ACTIVE");
-                  const lcColor = { ACTIVE: "var(--success)", PENDING_APPROVAL: "var(--warning)", DRAFT: "var(--text-muted)", SUSPENDED: "var(--danger)", DECOMMISSIONED: "var(--text-muted)" }[lcStatus] || "var(--text-muted)";
+                  const lcColor = { ACTIVE: "var(--success)", PENDING_APPROVAL: "var(--warning)", DRAFT: "var(--text-muted)", SUSPENDED: "var(--danger)" }[lcStatus] || "var(--text-muted)";
+                  const lastUpd = d.last_update ? new Date(d.last_update) : null;
+                  const staleMins = lastUpd ? (Date.now() - lastUpd.getTime()) / 60000 : 999;
+                  const stale = staleMins > 30;
+                  const estGenToday = (genKw || 0) * 5; // approx kWh
+                  // HC contribution: der kWp / (DT kVA * 0.95 * 0.80)
+                  const dtKva = (summary?.distribution_transformers || []).find(dt => dt.dt_id === d.dt_id)?.rated_kva || 100;
+                  const hcPct = ((d.nameplate_kw || 0) / (dtKva * 0.95 * 0.80)) * 100;
                   return (
-                  <tr key={d.der_id} onClick={() => setSelected(selected?.der_id === d.der_id ? null : d)} style={{ cursor: "pointer", background: selected?.der_id === d.der_id ? "var(--bg-hover)" : "" }}>
-                    <td style={{ fontSize: 11, fontFamily: "monospace" }}>{d.der_id}</td>
-                    <td><span className="tag">{d.der_type}</span></td>
-                    <td style={{ fontSize: 11 }}>{d.location_name}</td>
-                    <td>{d.nameplate_kw}kW</td>
-                    <td><span style={{ fontSize: 10, padding: "2px 6px", borderRadius: 4, background: "rgba(16,185,129,0.1)", color: "var(--success)", border: "1px solid rgba(16,185,129,0.3)" }}>{d.metering_type || "NET"}</span></td>
-                    <td style={{ color: "var(--solar)", fontWeight: 600 }}>{(d.current_kw || 0).toFixed(1)}</td>
-                    <td>{(d.cuf_pct || 0).toFixed(1)}%</td>
-                    <td style={{ fontSize: 10, color: "var(--cyan)" }}>{d.dt_id}</td>
+                  <tr key={d.der_id} onClick={() => setSelected(selected?.der_id === d.der_id ? null : d)}
+                    style={{ cursor: "pointer", background: selected?.der_id === d.der_id ? "var(--bg-hover)" : "", borderLeft: stale ? "3px solid var(--warning)" : "" }}>
+                    <td style={{ fontWeight: 600 }}>{d.consumer_name || d.location_name || d.der_id}</td>
+                    <td style={{ fontSize: 11, fontFamily: "monospace", color: "var(--text-muted)" }}>{d.consumer_id || "—"}</td>
+                    <td style={{ fontSize: 11, color: "var(--cyan)" }}>{d.dt_id}</td>
+                    <td style={{ fontSize: 11 }}>{d.feeder_id}</td>
+                    <td style={{ fontWeight: 600 }}>{d.nameplate_kw} kWp</td>
                     <td><span style={{ fontSize: 10, fontWeight: 700, color: lcColor }}>{lcStatus}</span></td>
-                    <td><Badge status={d.status} /></td>
+                    <td style={{ fontSize: 11, color: stale ? "var(--warning)" : "var(--text-muted)" }}>
+                      {lastUpd ? lastUpd.toLocaleTimeString() : "—"}
+                      {stale && <span title="MDMS data stale > 30 min"> ⏱</span>}
+                    </td>
+                    <td style={{ fontStyle: "italic", color: "var(--solar)" }}>{estGenToday.toFixed(1)} kWh</td>
+                    <td>
+                      <span style={{ fontSize: 11, fontWeight: 600, color: hcPct > 85 ? "var(--danger)" : hcPct > 60 ? "var(--warning)" : "var(--success)" }}>
+                        {hcPct.toFixed(0)}%
+                      </span>
+                    </td>
                   </tr>
                   );
                 })}
@@ -720,7 +775,11 @@ function DERFleetScreen({ ders }) {
             </div>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, fontSize: 12 }}>
               {[["Type", selected.der_type], ["OEM", selected.inverter_oem], ["Capacity", `${selected.nameplate_kw}kW`],
-                ["Now", `${(selected.current_kw||0).toFixed(2)}kW`], ["CUF", `${(selected.cuf_pct||0).toFixed(1)}%`],
+                ["Generation (Gross)", `${(selected.generation_kw ?? selected.current_kw ?? 0).toFixed(2)}kW`],
+                ["Net Export", `${(selected.export_kw ?? selected.current_kw ?? 0).toFixed(2)}kW`],
+                ["Self-Consumed", `${(selected.self_consumption_kw ?? 0).toFixed(2)}kW`],
+                ["Grid Import", `${(selected.import_kw ?? 0).toFixed(2)}kW`],
+                ["CUF", `${(selected.cuf_pct||0).toFixed(1)}%`],
                 ["PR", `${(selected.pr_pct||0).toFixed(1)}%`], ["Feeder", selected.feeder_id], ["DT", selected.dt_id],
                 ["Consumer", selected.consumer_id], ["Meter", selected.meter_id],
                 ["Aggregator", selected.aggregator_id], ["Curtailment", `${selected.curtailment_pct||100}%`],
@@ -750,6 +809,466 @@ function DERFleetScreen({ ders }) {
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+// ─── Network / DT Monitoring Screen ──────────────────────────────────────────
+
+function NetworkScreen({ summary }) {
+  const [initData, setInitData] = useState(null);
+  const [oeData, setOeData] = useState(null);
+  const [lfResult, setLfResult] = useState(null);
+  const [running, setRunning] = useState(false);
+  const [lastRun, setLastRun] = useState(null);
+  const [activeTab, setActiveTab] = useState("monitoring");
+
+  useEffect(() => {
+    apiFetch("/api/loadflow/sandbox/init?feeder_id=LK1").then(setInitData);
+    apiFetch("/api/oe/summary").then(setOeData);
+    apiFetch("/api/loadflow/results/LK1").then(d => { if (d && !d.detail) { setLfResult(d); setLastRun(d.computed_at || d.timestamp); } }).catch(() => {});
+  }, []);
+
+  const runLoadFlow = async () => {
+    if (!initData) return;
+    setRunning(true);
+    try {
+      const dtLoads = {};
+      (initData.dts || []).forEach(dt => { dtLoads[dt.dt_id] = dt.total_load_kw; });
+      const derGen = {};
+      (initData.ders || []).forEach(d => { derGen[d.der_id] = d.current_kw; });
+      const r = await apiFetch("/api/loadflow/run/LK1", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ dt_loads: dtLoads, der_generation: derGen, run_type: "on_demand" }),
+      });
+      setLfResult(r);
+      setLastRun(new Date().toISOString());
+      apiFetch("/api/oe/summary").then(setOeData);
+    } catch(e) {}
+    setRunning(false);
+  };
+
+  const dts = summary?.distribution_transformers || initData?.dts || [];
+  const lfDts = lfResult?.dt_results || {};
+
+  // Traffic-light from OE or loading
+  const getEnvelopeStatus = (dt) => {
+    const loading = dt.loading_pct || ((dt.total_der_kw || dt.total_load_kw || 0) / ((dt.rated_kva || 100) * 0.95) * 100);
+    const hcPct = ((dt.total_der_kw || 0) / ((dt.rated_kva || 100) * 0.95 * 0.80)) * 100;
+    if (loading > 85 || hcPct > 85) return "RED";
+    if (loading > 60 || hcPct > 60) return "AMBER";
+    return "GREEN";
+  };
+
+  const envColor = { GREEN: "var(--success)", AMBER: "var(--warning)", RED: "var(--danger)" };
+  const envIcon = { GREEN: "🟢", AMBER: "🟡", RED: "🔴" };
+
+  // Feeder rollup
+  const totalNetLoad = dts.reduce((s, dt) => s + (dt.total_load_kw || 0), 0);
+  const totalEstGen = dts.reduce((s, dt) => s + (dt.total_der_kw || 0), 0);
+  const totalKva = dts.reduce((s, dt) => s + (dt.rated_kva || 0), 0);
+  const avgLoadingPct = totalKva > 0 ? (totalNetLoad / (totalKva * 0.95)) * 100 : 0;
+
+  return (
+    <div>
+      <div className="kpi-grid" style={{ gridTemplateColumns: "repeat(5,1fr)" }}>
+        <KpiCard label="Distribution Transformers" value={dts.length} sub="on pilot feeder LK1" icon="🏗️" />
+        <KpiCard label="Net Load" value={totalNetLoad.toFixed(1)} unit="kW" sub="MDMS DT meter (measured)" color="var(--cyan)" icon="📊" />
+        <KpiCard label="Est. Gen" value={totalEstGen.toFixed(1)} unit="kW" sub={<span style={{ fontStyle: "italic" }}>Estimated · behind DTs</span>} color="var(--solar)" icon="☀️" />
+        <KpiCard label="Avg Loading" value={avgLoadingPct.toFixed(1)} unit="%" sub="Thermal loading % (net load / kVA)" color={avgLoadingPct > 85 ? "var(--danger)" : avgLoadingPct > 60 ? "var(--warning)" : "var(--success)"} icon="⚡" />
+        <KpiCard label="DTs in Red" value={dts.filter(dt => getEnvelopeStatus(dt) === "RED").length} sub="Envelope or HC > 85%" color={dts.filter(dt => getEnvelopeStatus(dt) === "RED").length > 0 ? "var(--danger)" : "var(--success)"} icon="🔴" />
+      </div>
+
+      <div style={{ display: "flex", gap: 12, alignItems: "center", marginBottom: 12, marginTop: 4 }}>
+        <div className="tabs">
+          {[["monitoring","📋 DT Monitoring"],["loadflow","⚡ Load Flow"],["feeder","📈 Feeder Summary"]].map(([id,label]) => (
+            <div key={id} className={`tab ${activeTab===id?"active":""}`} onClick={() => setActiveTab(id)}>{label}</div>
+          ))}
+        </div>
+        <button onClick={runLoadFlow} disabled={running} style={{ marginLeft: "auto", padding: "8px 18px", background: running ? "var(--bg)" : "rgba(99,102,241,0.15)", border: "1px solid rgba(99,102,241,0.4)", color: "var(--accent)", borderRadius: 6, cursor: running ? "default" : "pointer", fontWeight: 600, fontSize: 12 }}>
+          {running ? "⏳ Running..." : "▶ Run Load Flow Now"}
+        </button>
+        {lastRun && <span style={{ fontSize: 11, color: "var(--text-muted)" }}>Last run: {new Date(lastRun).toLocaleTimeString()}</span>}
+      </div>
+
+      {activeTab === "monitoring" && (
+        <div className="card" style={{ padding: 0 }}>
+          <table>
+            <thead>
+              <tr>
+                <th>DT Name</th><th>kVA</th>
+                <th>Net Load (kW) <span style={{ fontSize: 9, fontWeight: 400, color: "var(--text-muted)" }}>measured</span></th>
+                <th>Loading %</th>
+                <th>Est. Gen (kW) <span style={{ fontSize: 9, fontWeight: 400, fontStyle: "italic", color: "var(--text-muted)" }}>est.</span></th>
+                <th>Voltage (pu)</th>
+                <th>DOC (kW)</th>
+                <th>Envelope Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {/* Feeder rollup row */}
+              <tr style={{ background: "rgba(99,102,241,0.08)", fontWeight: 700 }}>
+                <td style={{ color: "var(--accent)" }}>⚡ LK1 Feeder Total</td>
+                <td style={{ color: "var(--text-muted)" }}>{totalKva} kVA</td>
+                <td style={{ fontWeight: 700 }}>{totalNetLoad.toFixed(1)}</td>
+                <td style={{ color: avgLoadingPct > 85 ? "var(--danger)" : avgLoadingPct > 60 ? "var(--warning)" : "var(--success)", fontWeight: 700 }}>{avgLoadingPct.toFixed(1)}%</td>
+                <td style={{ fontStyle: "italic", color: "var(--solar)" }}>{totalEstGen.toFixed(1)}</td>
+                <td>—</td><td>—</td>
+                <td><span style={{ fontSize: 11, fontWeight: 700, color: dts.filter(dt=>getEnvelopeStatus(dt)==="RED").length>0?"var(--danger)":"var(--success)" }}>{dts.filter(dt=>getEnvelopeStatus(dt)==="RED").length} RED DTs</span></td>
+              </tr>
+              {dts.map(dt => {
+                const lf = lfDts[dt.dt_id] || {};
+                const netLoad = dt.total_load_kw || 0;
+                const estGen = dt.total_der_kw || 0;
+                const kva = dt.rated_kva || 100;
+                const loadingPct = (netLoad / (kva * 0.95)) * 100;
+                const voltage = lf.voltage_pu || "—";
+                const doc = lf.doc_kw != null ? lf.doc_kw.toFixed(1) : "—";
+                const env = getEnvelopeStatus(dt);
+                return (
+                  <tr key={dt.dt_id}>
+                    <td style={{ fontWeight: 600 }}>{dt.dt_name || dt.dt_id}<br/><span style={{ fontSize: 10, color: "var(--text-muted)", fontFamily: "monospace" }}>{dt.dt_id}</span></td>
+                    <td style={{ color: "var(--text-muted)" }}>{kva} kVA</td>
+                    <td style={{ fontWeight: 600 }}>{netLoad.toFixed(1)}</td>
+                    <td>
+                      <span style={{ color: loadingPct > 85 ? "var(--danger)" : loadingPct > 60 ? "var(--warning)" : "var(--success)", fontWeight: 600 }}>{loadingPct.toFixed(1)}%</span>
+                    </td>
+                    <td style={{ fontStyle: "italic", color: "var(--solar)" }}>{estGen.toFixed(1)}</td>
+                    <td style={{ color: "var(--text-muted)", fontSize: 11 }}>{typeof voltage === "number" ? voltage.toFixed(3) : voltage} pu</td>
+                    <td style={{ color: "var(--cyan)", fontSize: 11 }}>{doc}</td>
+                    <td>
+                      <span style={{ fontSize: 11, fontWeight: 700, padding: "2px 8px", borderRadius: 10, background: env === "RED" ? "rgba(239,68,68,0.15)" : env === "AMBER" ? "rgba(245,158,11,0.15)" : "rgba(16,185,129,0.12)", color: envColor[env], border: `1px solid ${envColor[env]}33` }}>
+                        {envIcon[env]} {env}
+                      </span>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+          {dts.length === 0 && (
+            <div style={{ textAlign: "center", padding: "40px 16px", color: "var(--text-muted)" }}>
+              <div style={{ fontSize: 24, marginBottom: 8 }}>🏗️</div>
+              <div>Loading DT data...</div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {activeTab === "loadflow" && (
+        <div className="card">
+          <div className="card-title">⚡ Load Flow Results <span style={{ fontSize: 11, fontWeight: 400, color: "var(--text-muted)" }}>— pandapower BFS (Backward-Forward Sweep)</span></div>
+          {lfResult ? (
+            <div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 8, marginBottom: 16 }}>
+                {[
+                  ["Run Type", lfResult.run_type || "on_demand"],
+                  ["Converged", lfResult.converged ? "✅ Yes" : "❌ No"],
+                  ["Iterations", lfResult.iterations || "—"],
+                  ["Timestamp", lastRun ? new Date(lastRun).toLocaleTimeString() : "—"],
+                ].map(([k,v]) => (
+                  <div key={k} style={{ background: "var(--bg)", borderRadius: 6, padding: "8px 10px" }}>
+                    <div style={{ fontSize: 10, color: "var(--text-muted)" }}>{k}</div>
+                    <div style={{ fontWeight: 600, fontSize: 13 }}>{v}</div>
+                  </div>
+                ))}
+              </div>
+              {Object.keys(lfDts).length > 0 ? (
+                <table>
+                  <thead><tr><th>DT</th><th>Voltage (pu)</th><th>Loading %</th><th>DOC (kW)</th><th>Binding Constraint</th></tr></thead>
+                  <tbody>
+                    {Object.entries(lfDts).map(([dtId, r]) => (
+                      <tr key={dtId}>
+                        <td style={{ fontSize: 11, fontFamily: "monospace" }}>{dtId}</td>
+                        <td style={{ color: (r.voltage_pu||1) > 1.06 || (r.voltage_pu||1) < 0.94 ? "var(--danger)" : "var(--success)", fontWeight: 600 }}>
+                          {(r.voltage_pu||0).toFixed(4)} pu
+                        </td>
+                        <td style={{ color: (r.loading_pct||0) > 85 ? "var(--danger)" : "var(--success)", fontWeight: 600 }}>{(r.loading_pct||0).toFixed(1)}%</td>
+                        <td style={{ color: "var(--cyan)" }}>{r.doc_kw != null ? r.doc_kw.toFixed(1) : "—"} kW</td>
+                        <td style={{ fontSize: 11, color: "var(--text-muted)" }}>{r.binding_constraint || "—"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              ) : (
+                <div style={{ color: "var(--text-muted)", fontSize: 12 }}>No per-DT results yet. Run Load Flow to compute.</div>
+              )}
+            </div>
+          ) : (
+            <div style={{ textAlign: "center", padding: "32px 16px" }}>
+              <div style={{ fontSize: 11, color: "var(--text-muted)", marginBottom: 12 }}>No load flow run yet for this session</div>
+              <button onClick={runLoadFlow} style={{ padding: "8px 20px", background: "rgba(99,102,241,0.15)", border: "1px solid rgba(99,102,241,0.4)", color: "var(--accent)", borderRadius: 6, cursor: "pointer", fontWeight: 600 }}>
+                ▶ Run Load Flow Now
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+
+      {activeTab === "feeder" && (
+        <div className="card">
+          <div className="card-title">📈 Feeder Summary — LK1</div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+            <div>
+              <div style={{ fontSize: 12, color: "var(--text-muted)", marginBottom: 8 }}>DT Envelope Status Distribution</div>
+              {["GREEN","AMBER","RED"].map(env => {
+                const count = dts.filter(dt => getEnvelopeStatus(dt) === env).length;
+                const pct = dts.length > 0 ? (count/dts.length)*100 : 0;
+                return (
+                  <div key={env} style={{ marginBottom: 8 }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12 }}>
+                      <span style={{ color: envColor[env], fontWeight: 600 }}>{envIcon[env]} {env}</span>
+                      <span>{count} DTs ({pct.toFixed(0)}%)</span>
+                    </div>
+                    <div style={{ height: 6, background: "var(--bg)", borderRadius: 3, marginTop: 3 }}>
+                      <div style={{ height: "100%", width: `${pct}%`, background: envColor[env], borderRadius: 3 }} />
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+            <div>
+              <div style={{ fontSize: 12, color: "var(--text-muted)", marginBottom: 8 }}>Network Parameters</div>
+              {[
+                ["Conductor type", "ACSR Rabbit (75mm²)"],
+                ["R (Ω/km)", "0.271 (IS 398)"],
+                ["X (Ω/km)", "0.381 (IS 398)"],
+                ["Voltage band", "0.94 – 1.06 pu (CEA)"],
+                ["Thermal limit", "85% of rated kVA"],
+                ["Slack bus V", "1.0 pu (33/11kV SS)"],
+              ].map(([k,v]) => (
+                <div key={k} style={{ display: "flex", justifyContent: "space-between", fontSize: 11, padding: "4px 0", borderBottom: "1px solid var(--border)" }}>
+                  <span style={{ color: "var(--text-muted)" }}>{k}</span>
+                  <span style={{ fontWeight: 600 }}>{v}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Settings Screen ──────────────────────────────────────────────────────────
+
+function SettingsScreen() {
+  const [activeTab, setActiveTab] = useState("mdms");
+  const [mdmsConfig, setMdmsConfig] = useState({ mode: "mock", endpoint: "", token: "", poll_cadence_min: 15 });
+  const [sysParams, setSysParams] = useState({ pr_default: 0.78, diversity_factor: 0.80, power_factor: 0.95, hc_green_pct: 60, hc_amber_pct: 85, voltage_lower: 0.94, voltage_upper: 1.06 });
+  const [saved, setSaved] = useState(null);
+  const [auditLog, setAuditLog] = useState([]);
+
+  useEffect(() => {
+    apiFetch("/api/loadflow/config").then(d => {
+      if (d && !d.detail) setSysParams(prev => ({ ...prev, ...d }));
+    }).catch(() => {});
+    // Simulated audit log
+    setAuditLog([
+      { ts: new Date(Date.now() - 3600000).toISOString(), user: "operator@puvvnl.in", module: "Settings", field: "hc_amber_pct", old: "80", new: "85" },
+      { ts: new Date(Date.now() - 7200000).toISOString(), user: "admin@lt-ng.in", module: "DER Registry", field: "DER status", old: "Pending", new: "ACTIVE" },
+      { ts: new Date(Date.now() - 86400000).toISOString(), user: "admin@lt-ng.in", module: "DR Programs", field: "program_status", old: "Draft", new: "Active" },
+    ]);
+  }, []);
+
+  const saveConfig = async () => {
+    await apiFetch("/api/loadflow/config", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(sysParams) });
+    setSaved("System Parameters saved");
+    setTimeout(() => setSaved(null), 3000);
+  };
+
+  const inp = { background: "var(--bg)", border: "1px solid var(--border)", color: "var(--text)", padding: "6px 10px", borderRadius: 6, fontSize: 12, width: "100%" };
+  const tabs = [["mdms","📡 MDMS"],["network","🔌 Network Params"],["system","⚙️ System Params"],["notifications","🔔 Notifications"],["users","👥 Users"],["audit","📋 Audit Log"]];
+
+  return (
+    <div>
+      <div className="tabs" style={{ marginBottom: 16 }}>
+        {tabs.map(([id,label]) => (
+          <div key={id} className={`tab ${activeTab===id?"active":""}`} onClick={() => setActiveTab(id)}>{label}</div>
+        ))}
+      </div>
+
+      {activeTab === "mdms" && (
+        <div className="card">
+          <div className="card-title">📡 MDMS Configuration</div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, maxWidth: 700 }}>
+            <div>
+              <label style={{ fontSize: 11, color: "var(--text-muted)", display: "block", marginBottom: 4 }}>Data Mode</label>
+              <div style={{ display: "flex", gap: 8 }}>
+                {["mock","live"].map(m => (
+                  <button key={m} onClick={() => setMdmsConfig(p => ({ ...p, mode: m }))} style={{ flex: 1, padding: "8px", borderRadius: 6, border: `1px solid ${mdmsConfig.mode===m?"var(--accent)":"var(--border)"}`, background: mdmsConfig.mode===m ? "rgba(99,102,241,0.15)" : "var(--bg)", color: mdmsConfig.mode===m ? "var(--accent)" : "var(--text-muted)", cursor: "pointer", fontWeight: 600, textTransform: "uppercase", fontSize: 12 }}>
+                    {m === "mock" ? "🔵 Mock" : "🟢 Live"}
+                  </button>
+                ))}
+              </div>
+              {mdmsConfig.mode === "mock" && <div style={{ fontSize: 11, color: "var(--warning)", marginTop: 4 }}>⚠ Using simulated 15-min data — not connected to AMISP MDMS</div>}
+            </div>
+            <div>
+              <label style={{ fontSize: 11, color: "var(--text-muted)", display: "block", marginBottom: 4 }}>Poll Cadence (minutes)</label>
+              <input style={inp} type="number" min={1} max={60} value={mdmsConfig.poll_cadence_min} onChange={e => setMdmsConfig(p => ({ ...p, poll_cadence_min: +e.target.value }))} />
+            </div>
+            <div style={{ gridColumn: "1/-1" }}>
+              <label style={{ fontSize: 11, color: "var(--text-muted)", display: "block", marginBottom: 4 }}>MDMS API Endpoint URL</label>
+              <input style={inp} type="url" placeholder="https://amisp.puvvnl.in/api/mdms/v1" value={mdmsConfig.endpoint} onChange={e => setMdmsConfig(p => ({ ...p, endpoint: e.target.value }))} disabled={mdmsConfig.mode === "mock"} />
+            </div>
+            <div style={{ gridColumn: "1/-1" }}>
+              <label style={{ fontSize: 11, color: "var(--text-muted)", display: "block", marginBottom: 4 }}>Auth Token</label>
+              <input style={inp} type="password" placeholder="Bearer token" value={mdmsConfig.token} onChange={e => setMdmsConfig(p => ({ ...p, token: e.target.value }))} disabled={mdmsConfig.mode === "mock"} />
+            </div>
+          </div>
+          <div style={{ marginTop: 16, display: "flex", gap: 8, alignItems: "center" }}>
+            <button style={{ padding: "8px 20px", background: "rgba(99,102,241,0.15)", border: "1px solid rgba(99,102,241,0.4)", color: "var(--accent)", borderRadius: 6, cursor: "pointer", fontWeight: 600, fontSize: 12 }}>
+              Save MDMS Config
+            </button>
+            <span style={{ fontSize: 11, color: "var(--text-muted)" }}>Changes take effect on next poll cycle</span>
+          </div>
+        </div>
+      )}
+
+      {activeTab === "network" && (
+        <div className="card">
+          <div className="card-title">🔌 Network Parameters <span style={{ fontSize: 11, fontWeight: 400, color: "var(--text-muted)" }}>— per IS 398 / IEC 60076 / CEA Regulations 2010</span></div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+            <div>
+              <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 8, color: "var(--accent)" }}>Conductor Parameters (ACSR Rabbit 75mm²)</div>
+              {[["R (Ω/km) — HT", "0.271"],["X (Ω/km) — HT", "0.381"],["R (Ω/km) — LT XLPE 95mm²", "0.193"],["X (Ω/km) — LT XLPE 95mm²", "0.075"]].map(([k,v]) => (
+                <div key={k} style={{ display: "flex", justifyContent: "space-between", padding: "6px 0", borderBottom: "1px solid var(--border)", fontSize: 12 }}>
+                  <span style={{ color: "var(--text-muted)" }}>{k}</span>
+                  <input style={{ ...inp, width: 80, textAlign: "right" }} defaultValue={v} />
+                </div>
+              ))}
+            </div>
+            <div>
+              <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 8, color: "var(--accent)" }}>DT Impedance (IEC 60076-1 defaults)</div>
+              {[["100 kVA DT %Z", "4.0"],["250 kVA DT %Z", "4.5"],["400 kVA DT %Z", "4.5"]].map(([k,v]) => (
+                <div key={k} style={{ display: "flex", justifyContent: "space-between", padding: "6px 0", borderBottom: "1px solid var(--border)", fontSize: 12 }}>
+                  <span style={{ color: "var(--text-muted)" }}>{k}</span>
+                  <input style={{ ...inp, width: 80, textAlign: "right" }} defaultValue={v} />
+                </div>
+              ))}
+              <div style={{ fontSize: 12, fontWeight: 600, marginTop: 16, marginBottom: 8, color: "var(--accent)" }}>Voltage Limits (CEA Regulations 2010)</div>
+              {[["Lower limit (pu)", "0.94"],["Upper limit (pu)", "1.06"],["Slack bus voltage (pu)", "1.00"]].map(([k,v]) => (
+                <div key={k} style={{ display: "flex", justifyContent: "space-between", padding: "6px 0", borderBottom: "1px solid var(--border)", fontSize: 12 }}>
+                  <span style={{ color: "var(--text-muted)" }}>{k}</span>
+                  <input style={{ ...inp, width: 80, textAlign: "right" }} defaultValue={v} />
+                </div>
+              ))}
+            </div>
+          </div>
+          <button style={{ marginTop: 16, padding: "8px 20px", background: "rgba(99,102,241,0.15)", border: "1px solid rgba(99,102,241,0.4)", color: "var(--accent)", borderRadius: 6, cursor: "pointer", fontWeight: 600, fontSize: 12 }}>Save Network Parameters</button>
+        </div>
+      )}
+
+      {activeTab === "system" && (
+        <div className="card">
+          <div className="card-title">⚙️ System Parameters</div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, maxWidth: 700 }}>
+            {[
+              { label: "Performance Ratio (PR) default", key: "pr_default", step: 0.01, min: 0.5, max: 1.0, note: "Default 0.78 — inverter eff × losses" },
+              { label: "Diversity Factor", key: "diversity_factor", step: 0.01, min: 0.5, max: 1.0, note: "Default 0.80 — not all DERs peak simultaneously" },
+              { label: "Power Factor (DER)", key: "power_factor", step: 0.01, min: 0.8, max: 1.0, note: "Default 0.95" },
+              { label: "HC Green threshold (%)", key: "hc_green_pct", step: 1, min: 10, max: 80, note: "Below this = GREEN (safe)" },
+              { label: "HC Amber threshold (%)", key: "hc_amber_pct", step: 1, min: 50, max: 100, note: "Above this = RED (capacity breached)" },
+              { label: "Voltage lower limit (pu)", key: "voltage_lower", step: 0.01, min: 0.8, max: 1.0, note: "CEA: 0.94" },
+              { label: "Voltage upper limit (pu)", key: "voltage_upper", step: 0.01, min: 1.0, max: 1.2, note: "CEA: 1.06" },
+              { label: "LF run cadence (min)", key: "lf_cadence_min", step: 5, min: 15, max: 60, note: "Default 30 min" },
+            ].map(f => (
+              <div key={f.key}>
+                <label style={{ fontSize: 11, color: "var(--text-muted)", display: "block", marginBottom: 3 }}>{f.label}</label>
+                <input style={inp} type="number" step={f.step} min={f.min} max={f.max} value={sysParams[f.key] || ""} onChange={e => setSysParams(p => ({ ...p, [f.key]: +e.target.value }))} />
+                <div style={{ fontSize: 10, color: "var(--text-muted)", marginTop: 2 }}>{f.note}</div>
+              </div>
+            ))}
+          </div>
+          <div style={{ marginTop: 16, display: "flex", gap: 8, alignItems: "center" }}>
+            <button onClick={saveConfig} style={{ padding: "8px 20px", background: "rgba(99,102,241,0.15)", border: "1px solid rgba(99,102,241,0.4)", color: "var(--accent)", borderRadius: 6, cursor: "pointer", fontWeight: 600, fontSize: 12 }}>
+              Save System Parameters
+            </button>
+            {saved && <span style={{ fontSize: 12, color: "var(--success)" }}>✅ {saved}</span>}
+          </div>
+        </div>
+      )}
+
+      {activeTab === "notifications" && (
+        <div className="card">
+          <div className="card-title">🔔 Notification Configuration</div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, maxWidth: 700 }}>
+            <div>
+              <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 8, color: "var(--accent)" }}>📧 Email (SMTP)</div>
+              {[["SMTP Host","smtp.puvvnl.in"],["Port","587"],["Sender Email","derms@puvvnl.in"]].map(([k,v]) => (
+                <div key={k} style={{ marginBottom: 8 }}>
+                  <label style={{ fontSize: 11, color: "var(--text-muted)", display: "block", marginBottom: 2 }}>{k}</label>
+                  <input style={inp} defaultValue={v} />
+                </div>
+              ))}
+            </div>
+            <div>
+              <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 8, color: "var(--accent)" }}>📱 SMS Gateway (DLT-registered)</div>
+              {[["Gateway Endpoint","https://sms.puvvnl.in/api/send"],["Sender ID","PUVVNL"],["DLT Template ID","1234567890"]].map(([k,v]) => (
+                <div key={k} style={{ marginBottom: 8 }}>
+                  <label style={{ fontSize: 11, color: "var(--text-muted)", display: "block", marginBottom: 2 }}>{k}</label>
+                  <input style={inp} defaultValue={v} />
+                </div>
+              ))}
+            </div>
+            <div style={{ gridColumn: "1/-1", background: "rgba(245,158,11,0.08)", border: "1px solid rgba(245,158,11,0.25)", borderRadius: 6, padding: "8px 12px", fontSize: 11, color: "var(--warning)" }}>
+              ℹ WhatsApp Business API — Optional third channel. Not in Phase 1 scope.
+            </div>
+          </div>
+          <button style={{ marginTop: 16, padding: "8px 20px", background: "rgba(99,102,241,0.15)", border: "1px solid rgba(99,102,241,0.4)", color: "var(--accent)", borderRadius: 6, cursor: "pointer", fontWeight: 600, fontSize: 12 }}>Save Notification Config</button>
+        </div>
+      )}
+
+      {activeTab === "users" && (
+        <div className="card" style={{ padding: 0 }}>
+          <div style={{ padding: "12px 16px 8px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <div className="card-title" style={{ margin: 0 }}>👥 Users & Roles</div>
+            <button style={{ padding: "6px 14px", background: "rgba(99,102,241,0.15)", border: "1px solid rgba(99,102,241,0.4)", color: "var(--accent)", borderRadius: 6, cursor: "pointer", fontSize: 11, fontWeight: 600 }}>+ Add User</button>
+          </div>
+          <table>
+            <thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Last Login</th><th>Status</th></tr></thead>
+            <tbody>
+              {[
+                { name: "Rajesh Kumar", email: "rajesh.k@lt-ng.in", role: "Admin", last: "Today 09:15", status: "Active" },
+                { name: "Priya Sharma", email: "priya.s@puvvnl.in", role: "Operator", last: "Today 08:42", status: "Active" },
+                { name: "Amit Singh", email: "amit.s@puvvnl.in", role: "Viewer", last: "Yesterday 17:30", status: "Active" },
+              ].map(u => (
+                <tr key={u.email}>
+                  <td style={{ fontWeight: 600 }}>{u.name}</td>
+                  <td style={{ fontSize: 11, color: "var(--text-muted)" }}>{u.email}</td>
+                  <td><span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 4, background: u.role==="Admin"?"rgba(239,68,68,0.12)":u.role==="Operator"?"rgba(99,102,241,0.12)":"rgba(107,114,128,0.12)", color: u.role==="Admin"?"var(--danger)":u.role==="Operator"?"var(--accent)":"var(--text-muted)", fontWeight: 700 }}>{u.role}</span></td>
+                  <td style={{ fontSize: 11, color: "var(--text-muted)" }}>{u.last}</td>
+                  <td><Badge status={u.status} /></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {activeTab === "audit" && (
+        <div className="card" style={{ padding: 0 }}>
+          <div style={{ padding: "12px 16px 8px" }}>
+            <div className="card-title">📋 Audit Log <span style={{ fontSize: 11, fontWeight: 400, color: "var(--text-muted)" }}>— 7-year retention (CERC compliance)</span></div>
+          </div>
+          <table>
+            <thead><tr><th>Timestamp</th><th>User</th><th>Module</th><th>Field</th><th>Old Value</th><th>New Value</th></tr></thead>
+            <tbody>
+              {auditLog.map((log, i) => (
+                <tr key={i}>
+                  <td style={{ fontSize: 11, fontFamily: "monospace" }}>{new Date(log.ts).toLocaleString()}</td>
+                  <td style={{ fontSize: 11 }}>{log.user}</td>
+                  <td><span className="tag">{log.module}</span></td>
+                  <td style={{ fontSize: 11 }}>{log.field}</td>
+                  <td style={{ fontSize: 11, color: "var(--danger)" }}>{log.old}</td>
+                  <td style={{ fontSize: 11, color: "var(--success)", fontWeight: 600 }}>{log.new}</td>
+                </tr>
+              ))}
+              {auditLog.length === 0 && <tr><td colSpan={6} style={{ textAlign: "center", color: "var(--text-muted)", padding: 24 }}>No audit entries yet</td></tr>}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }
@@ -1083,38 +1602,40 @@ function PlanningScreen({ ders, summary }) {
   );
 }
 
-// ─── Scheduling Screen ─────────────────────────────────────────────────────────
+// ─── Scheduling Screen (Day-ahead Schedule + DR Planning Dashboard) ────────────
 
 function SchedulingScreen({ ders }) {
-  const [schedule, setSchedule] = useState([]);
+  const [activeTab, setActiveTab] = useState("dayahead");
   const [drForm, setDrForm] = useState({ target_kw: 50, duration_min: 60, feeder_id: "FDR-01", reason: "Peak Shaving" });
   const [drResult, setDrResult] = useState(null);
   const [controls, setControls] = useState([]);
+
+  // 96-block day-ahead schedule state (15-min intervals, D+1)
+  const generate96Blocks = () => {
+    const blocks = [];
+    for (let i = 0; i < 96; i++) {
+      const h = Math.floor(i / 4);
+      const m = (i % 4) * 15;
+      const timeStr = `${String(h).padStart(2,"0")}:${String(m).padStart(2,"0")}`;
+      // Simulated demand (sinusoidal with morning/evening peaks)
+      const demandMw = +(0.8 + 0.4 * Math.sin(Math.PI * (h - 6) / 14) + 0.2 * Math.sin(Math.PI * (h - 18) / 6 + Math.PI)).toFixed(3);
+      // Solar generation — 0 at night, peak at noon
+      const solarMw = h >= 6 && h <= 18 ? +(0.3 * Math.sin(Math.PI * (h - 6) / 12)).toFixed(3) : 0;
+      blocks.push({ time: timeStr, demand_mw: Math.max(0.2, demandMw), solar_mw: solarMw, gen_mw: solarMw });
+    }
+    return blocks;
+  };
+
+  const [blocks, setBlocks] = useState(generate96Blocks);
+  const [scheduleUploaded, setScheduleUploaded] = useState(false);
+  const [showCreateEvent, setShowCreateEvent] = useState(false);
+  const [eventForm, setEventForm] = useState({ program_id: "PROG-001", start_time: "", end_time: "", target_mw: 0.5, channels: ["email", "sms"] });
 
   useEffect(() => {
     apiFetch("/api/ders/dispatch/der-controls").then(d => setControls(d?.der_controls || []));
     const iv = setInterval(() => {
       apiFetch("/api/ders/dispatch/der-controls").then(d => setControls(d?.der_controls || []));
     }, 10000);
-    // Build simulated 7-day schedule
-    const days = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
-    const types = ["Peak Shaving","Voltage Regulation","Frequency Response","Demand Response","Scheduled Maintenance"];
-    const built = [];
-    for (let d = 0; d < 7; d++) {
-      const n = Math.floor(Math.random() * 3);
-      for (let i = 0; i < n; i++) {
-        const h = [7,11,14,17,20][Math.floor(Math.random()*5)];
-        built.push({
-          id: `SCH-${d}-${i}`, day: days[d], time: `${h}:00`,
-          type: types[Math.floor(Math.random()*types.length)],
-          feeder: ["FDR-01","FDR-02","FDR-03"][Math.floor(Math.random()*3)],
-          kw: [20,30,50,75,100][Math.floor(Math.random()*5)],
-          duration: [15,30,60][Math.floor(Math.random()*3)],
-          status: d < 2 ? "Completed" : d === 2 ? "Active" : "Scheduled",
-        });
-      }
-    }
-    setSchedule(built);
     return () => clearInterval(iv);
   }, []);
 
@@ -1124,121 +1645,250 @@ function SchedulingScreen({ ders }) {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify(drForm),
       });
-      const result = await r.json();
-      setDrResult(result);
+      setDrResult(await r.json());
       apiFetch("/api/ders/dispatch/der-controls").then(d => setControls(d?.der_controls || []));
     } catch(e) { setDrResult({ error: e.message }); }
   };
 
-  const bess = ders.filter(d => d.der_type === "BESS");
-  const totalAvail = bess.reduce((s,d) => s + (d.available_kw||0), 0);
+  // Identify deficit blocks (demand > gen) for DR planning
+  const deficitBlocks = blocks.filter(b => b.demand_mw > b.gen_mw + 0.1);
+  const peakDeficit = deficitBlocks.reduce((max, b) => Math.max(max, b.demand_mw - b.gen_mw), 0);
+  const enrolledCapacity = 2.5; // MW enrolled (simulated)
+  const coverageRatio = enrolledCapacity / (peakDeficit || 0.01);
+  const coverageColor = coverageRatio >= 1.5 ? "var(--success)" : coverageRatio >= 1.0 ? "var(--warning)" : "var(--danger)";
+
+  const inp = { background: "var(--bg)", border: "1px solid var(--border)", color: "var(--text)", padding: "6px 8px", borderRadius: 4, fontSize: 12, width: "100%" };
+
+  // Mini SVG chart for 96-block demand/gen/forecast
+  const chartW = 700, chartH = 140;
+  const maxMw = Math.max(...blocks.map(b => b.demand_mw)) * 1.1 || 1;
+  const bw = chartW / 96;
+  const toY = v => chartH - (v / maxMw) * chartH;
+  const genPath = blocks.map((b,i) => `${i===0?"M":"L"}${i*bw+bw/2},${toY(b.gen_mw)}`).join(" ");
+  const demandPath = blocks.map((b,i) => `${i===0?"M":"L"}${i*bw+bw/2},${toY(b.demand_mw)}`).join(" ");
 
   return (
     <div>
-      <div className="kpi-grid" style={{ gridTemplateColumns: "repeat(4,1fr)" }}>
-        <KpiCard label="BESS Available" value={totalAvail.toFixed(1)+"kW"} sub="Ready for dispatch" color="var(--success)" icon="🔋" />
-        <KpiCard label="Active Controls" value={controls.length} sub="DERControls in effect" color={controls.length > 0 ? "var(--warning)" : "var(--success)"} icon="🎛️" />
-        <KpiCard label="Scheduled Events" value={schedule.filter(s=>s.status==="Scheduled").length} sub="Upcoming this week" icon="📅" />
-        <KpiCard label="BESS Units" value={bess.length} sub="Storage DERs online" color="var(--purple)" icon="⚡" />
+      <div className="tabs" style={{ marginBottom: 16 }}>
+        {[["dayahead","📅 Day-ahead Schedule"],["drplanning","📊 DR Planning Dashboard"],["dispatch","⚡ Manual Dispatch"]].map(([id,label]) => (
+          <div key={id} className={`tab ${activeTab===id?"active":""}`} onClick={() => setActiveTab(id)}>{label}</div>
+        ))}
       </div>
 
-      <div className="row row-2">
-        <div className="card">
-          <div className="card-title">⚡ Dispatch DR Event (Manual)</div>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 10 }}>
-            {[
-              { label: "Target kW", key: "target_kw", type: "number" },
-              { label: "Duration (min)", key: "duration_min", type: "number" },
-            ].map(f => (
-              <div key={f.key}>
-                <label style={{ fontSize: 11, color: "var(--text-muted)", display: "block", marginBottom: 2 }}>{f.label}</label>
-                <input type="number" value={drForm[f.key]} onChange={e => setDrForm({...drForm, [f.key]: +e.target.value})}
-                  style={{ width: "100%", background: "var(--bg)", border: "1px solid var(--border)", color: "var(--text)", padding: "6px 8px", borderRadius: 4, fontSize: 13 }} />
+      {/* TAB 1: Day-ahead Schedule Input */}
+      {activeTab === "dayahead" && (
+        <div>
+          <div className="row row-2" style={{ marginBottom: 12 }}>
+            <div className="card">
+              <div className="card-title">📅 D+1 Schedule Input <span style={{ fontSize: 11, fontWeight: 400, color: "var(--text-muted)" }}>— 96 × 15-min blocks for tomorrow</span></div>
+              <div style={{ display: "flex", gap: 8, marginBottom: 12, alignItems: "center" }}>
+                <button onClick={() => setScheduleUploaded(false)} style={{ padding: "6px 14px", background: !scheduleUploaded?"rgba(99,102,241,0.15)":"var(--bg)", border: `1px solid ${!scheduleUploaded?"rgba(99,102,241,0.4)":"var(--border)"}`, color: !scheduleUploaded?"var(--accent)":"var(--text-muted)", borderRadius: 6, cursor: "pointer", fontSize: 12, fontWeight: 600 }}>📝 Manual Entry</button>
+                <button onClick={() => setScheduleUploaded(true)} style={{ padding: "6px 14px", background: scheduleUploaded?"rgba(99,102,241,0.15)":"var(--bg)", border: `1px solid ${scheduleUploaded?"rgba(99,102,241,0.4)":"var(--border)"}`, color: scheduleUploaded?"var(--accent)":"var(--text-muted)", borderRadius: 6, cursor: "pointer", fontSize: 12, fontWeight: 600 }}>📂 CSV Upload</button>
+                <span style={{ marginLeft: "auto", fontSize: 11, color: "var(--warning)" }}>⚠ Demo data — enter real schedule before 21:00 IST</span>
               </div>
-            ))}
-            <div>
-              <label style={{ fontSize: 11, color: "var(--text-muted)", display: "block", marginBottom: 2 }}>Feeder</label>
-              <select value={drForm.feeder_id} onChange={e => setDrForm({...drForm, feeder_id: e.target.value})}
-                style={{ width: "100%", background: "var(--bg)", border: "1px solid var(--border)", color: "var(--text)", padding: "6px 8px", borderRadius: 4, fontSize: 13 }}>
-                <option value="">All Feeders</option>
-                {["FDR-01","FDR-02","FDR-03"].map(f => <option key={f} value={f}>{f}</option>)}
-              </select>
+              {scheduleUploaded ? (
+                <div style={{ border: "2px dashed var(--border)", borderRadius: 8, padding: "40px", textAlign: "center" }}>
+                  <div style={{ fontSize: 24, marginBottom: 8 }}>📂</div>
+                  <div style={{ fontWeight: 600, marginBottom: 4 }}>Drag & drop CSV or click to browse</div>
+                  <div style={{ fontSize: 11, color: "var(--text-muted)", marginBottom: 12 }}>Expected columns: time, scheduled_gen_mw, projected_demand_mw</div>
+                  <a href="#" style={{ fontSize: 11, color: "var(--accent)" }}>⬇ Download Template</a>
+                </div>
+              ) : (
+                <div style={{ maxHeight: 360, overflowY: "auto", fontSize: 12 }}>
+                  <table>
+                    <thead style={{ position: "sticky", top: 0, background: "var(--bg-card)", zIndex: 1 }}>
+                      <tr><th>Time (IST)</th><th>Sched. Gen (MW)</th><th>Proj. Demand (MW)</th><th>D+1 Solar (MW)</th></tr>
+                    </thead>
+                    <tbody>
+                      {blocks.slice(0, 24).map((b, i) => (
+                        <tr key={i}>
+                          <td style={{ fontFamily: "monospace", color: "var(--text-muted)" }}>{b.time}</td>
+                          <td><input style={{ ...inp, width: 80, textAlign: "right" }} type="number" step="0.01" value={b.gen_mw} onChange={e => setBlocks(prev => { const n=[...prev]; n[i]={...n[i],gen_mw:+e.target.value}; return n; })} /></td>
+                          <td><input style={{ ...inp, width: 80, textAlign: "right", color: "var(--warning)" }} type="number" step="0.01" value={b.demand_mw} onChange={e => setBlocks(prev => { const n=[...prev]; n[i]={...n[i],demand_mw:+e.target.value}; return n; })} /></td>
+                          <td style={{ fontStyle: "italic", color: "var(--solar)" }}>{b.solar_mw.toFixed(3)}</td>
+                        </tr>
+                      ))}
+                      <tr><td colSpan={4} style={{ textAlign: "center", color: "var(--text-muted)", fontSize: 11, padding: "8px" }}>… showing 00:00–05:45 · scroll to see all 96 blocks</td></tr>
+                    </tbody>
+                  </table>
+                </div>
+              )}
+              <div style={{ marginTop: 12, display: "flex", gap: 8 }}>
+                <button style={{ flex: 1, padding: "8px", background: "rgba(99,102,241,0.15)", border: "1px solid rgba(99,102,241,0.4)", color: "var(--accent)", borderRadius: 6, cursor: "pointer", fontWeight: 600, fontSize: 12 }}>
+                  💾 Save Schedule
+                </button>
+                <button onClick={() => setActiveTab("drplanning")} style={{ padding: "8px 16px", background: "rgba(16,185,129,0.12)", border: "1px solid rgba(16,185,129,0.3)", color: "var(--success)", borderRadius: 6, cursor: "pointer", fontWeight: 600, fontSize: 12 }}>
+                  → DR Planning Dashboard
+                </button>
+              </div>
             </div>
-            <div>
-              <label style={{ fontSize: 11, color: "var(--text-muted)", display: "block", marginBottom: 2 }}>Reason</label>
-              <select value={drForm.reason} onChange={e => setDrForm({...drForm, reason: e.target.value})}
-                style={{ width: "100%", background: "var(--bg)", border: "1px solid var(--border)", color: "var(--text)", padding: "6px 8px", borderRadius: 4, fontSize: 13 }}>
-                {["Peak Shaving","Voltage Regulation","Frequency Response","Grid Congestion","Manual Override"].map(r => <option key={r} value={r}>{r}</option>)}
-              </select>
+            <div className="card">
+              <div className="card-title">📋 Schedule Summary</div>
+              {[
+                ["Total Scheduled Gen", (blocks.reduce((s,b)=>s+b.gen_mw,0)/4).toFixed(2)+" MWh"],
+                ["Total Projected Demand", (blocks.reduce((s,b)=>s+b.demand_mw,0)/4).toFixed(2)+" MWh"],
+                ["Est. Solar Contribution", (blocks.reduce((s,b)=>s+b.solar_mw,0)/4).toFixed(2)+" MWh"],
+                ["Deficit Blocks", deficitBlocks.length + " of 96"],
+                ["Peak Deficit", peakDeficit.toFixed(3)+" MW at "+((deficitBlocks.sort((a,b)=>(b.demand_mw-b.gen_mw)-(a.demand_mw-a.gen_mw))[0]||{}).time||"—")],
+                ["DR Suggested", deficitBlocks.length > 0 ? "⚠ Yes" : "✅ No"],
+              ].map(([k,v]) => (
+                <div key={k} style={{ display: "flex", justifyContent: "space-between", padding: "7px 0", borderBottom: "1px solid var(--border)", fontSize: 12 }}>
+                  <span style={{ color: "var(--text-muted)" }}>{k}</span>
+                  <span style={{ fontWeight: 600 }}>{v}</span>
+                </div>
+              ))}
             </div>
           </div>
-          <button onClick={submitDR} style={{ background: "var(--purple)", color: "#fff", border: "none", padding: "10px", borderRadius: 6, cursor: "pointer", fontWeight: 600, fontSize: 13, width: "100%" }}>
-            ⚡ Dispatch via IEEE 2030.5 DERControl
-          </button>
-          {drResult && (
-            <div style={{ marginTop: 10, background: "var(--bg)", borderRadius: 6, padding: 10, fontSize: 12 }}>
-              {drResult.error
-                ? <span style={{ color: "var(--danger)" }}>❌ {drResult.error}</span>
-                : <div>
-                    <div style={{ color: "var(--success)", fontWeight: 600 }}>✅ {drResult.event_id} — {drResult.dispatched_kw} kW dispatched</div>
-                    <div style={{ color: "var(--text-muted)", marginTop: 4 }}>BESS units: {drResult.dispatched_ders?.join(", ")}</div>
-                  </div>
-              }
+        </div>
+      )}
+
+      {/* TAB 2: DR Planning Dashboard */}
+      {activeTab === "drplanning" && (
+        <div>
+          {/* Deficit banner with DR suggestion */}
+          {deficitBlocks.length > 0 && (
+            <div style={{ background: "rgba(245,158,11,0.12)", border: "1px solid rgba(245,158,11,0.4)", borderRadius: 8, padding: "12px 16px", marginBottom: 12, display: "flex", alignItems: "center", gap: 16 }}>
+              <span style={{ fontSize: 14 }}>⚠️</span>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontWeight: 700, color: "var(--warning)", fontSize: 13 }}>Supply-demand deficit identified in {deficitBlocks.length} blocks</div>
+                <div style={{ fontSize: 11, color: "var(--text-muted)" }}>Peak deficit: {peakDeficit.toFixed(2)} MW · Consider scheduling a DR event</div>
+              </div>
+              <button onClick={() => setShowCreateEvent(true)} style={{ padding: "8px 16px", background: "rgba(245,158,11,0.2)", border: "1px solid rgba(245,158,11,0.5)", color: "var(--warning)", borderRadius: 6, cursor: "pointer", fontWeight: 700, fontSize: 12 }}>
+                + Create DR Event
+              </button>
             </div>
           )}
 
-          <div style={{ marginTop: 16 }}>
-            <div className="card-title">🔋 BESS Fleet — Available Capacity</div>
-            <table>
-              <thead><tr><th>Unit</th><th>Feeder</th><th>Nameplate</th><th>SoC</th><th>Available</th><th>Status</th></tr></thead>
-              <tbody>
-                {bess.map(b => (
-                  <tr key={b.der_id}>
-                    <td style={{ fontSize: 10, fontFamily: "monospace" }}>{b.der_id}</td>
-                    <td>{b.feeder_id}</td>
-                    <td>{b.nameplate_kw} kW</td>
-                    <td>
-                      <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                        <div style={{ width: 40, height: 6, background: "var(--bg)", borderRadius: 3 }}>
-                          <div style={{ width: `${b.soc_pct||0}%`, height: "100%", borderRadius: 3, background: (b.soc_pct||0)>50?"var(--success)":"var(--warning)" }} />
-                        </div>
-                        <span style={{ fontSize: 10 }}>{b.soc_pct||0}%</span>
-                      </div>
-                    </td>
-                    <td style={{ color: "var(--success)", fontWeight: 600 }}>{(b.available_kw||0).toFixed(1)} kW</td>
-                    <td><Badge status={b.status} /></td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+          {/* 96-block chart */}
+          <div className="card" style={{ marginBottom: 12 }}>
+            <div className="card-title">📊 D+1 Supply-Demand Balance (96 × 15-min blocks)</div>
+            <svg width="100%" viewBox={`0 0 ${chartW} ${chartH + 30}`} style={{ overflow: "visible" }}>
+              {/* Deficit highlights */}
+              {blocks.map((b,i) => b.demand_mw > b.gen_mw + 0.05 && (
+                <rect key={i} x={i*bw} y={0} width={bw} height={chartH} fill="rgba(239,68,68,0.08)" />
+              ))}
+              {/* Solar area fill */}
+              <path d={`M0,${chartH} ${blocks.map((b,i) => `L${i*bw+bw/2},${toY(b.solar_mw)}`).join(" ")} L${chartW},${chartH} Z`} fill="rgba(252,211,77,0.25)" />
+              {/* Gen line */}
+              <path d={genPath} fill="none" stroke="#FCD34D" strokeWidth={1.5} />
+              {/* Demand line */}
+              <path d={demandPath} fill="none" stroke="#60A5FA" strokeWidth={1.5} strokeDasharray="4 2" />
+              {/* Hour labels */}
+              {[0,12,24,36,48,60,72,84].map(i => (
+                <text key={i} x={i*bw} y={chartH+18} fontSize={9} fill="var(--text-muted)">{blocks[i]?.time}</text>
+              ))}
+            </svg>
+            <div style={{ display: "flex", gap: 16, fontSize: 11, marginTop: 6 }}>
+              <span style={{ color: "#FCD34D" }}>─── Scheduled Gen (MW)</span>
+              <span style={{ color: "#60A5FA" }}>- - - Projected Demand (MW)</span>
+              <span style={{ color: "rgba(239,68,68,0.7)" }}>▓ Deficit blocks</span>
+            </div>
+          </div>
+
+          {/* Enrolled capacity panel */}
+          <div className="row row-2">
+            <div className="card">
+              <div className="card-title">⚡ Enrolled DR Capacity vs Deficit</div>
+              <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 12 }}>
+                <div style={{ fontSize: 28, fontWeight: 700, color: coverageColor }}>{coverageRatio.toFixed(2)}×</div>
+                <div>
+                  <div style={{ fontSize: 12, color: "var(--text-muted)" }}>Coverage ratio (enrolled / peak deficit)</div>
+                  <div style={{ fontSize: 11, marginTop: 2, color: coverageColor, fontWeight: 600 }}>
+                    {coverageRatio >= 1.5 ? "✅ SUFFICIENT — well covered" : coverageRatio >= 1.0 ? "⚠ MARGINAL — borderline coverage" : "🔴 INSUFFICIENT — enrolled capacity below target"}
+                  </div>
+                </div>
+              </div>
+              {[["Enrolled capacity",enrolledCapacity.toFixed(2)+" MW"],["Peak deficit",peakDeficit.toFixed(2)+" MW"],["Buffer",Math.max(0,enrolledCapacity-peakDeficit).toFixed(2)+" MW"]].map(([k,v]) => (
+                <div key={k} style={{ display: "flex", justifyContent: "space-between", padding: "6px 0", borderBottom: "1px solid var(--border)", fontSize: 12 }}>
+                  <span style={{ color: "var(--text-muted)" }}>{k}</span><span style={{ fontWeight: 600 }}>{v}</span>
+                </div>
+              ))}
+            </div>
+            <div className="card">
+              <div className="card-title">📅 Create DR Event</div>
+              {[
+                { label: "Program", key: "program_id", type: "select", options: ["PROG-001","PROG-002"] },
+                { label: "Start Time (IST)", key: "start_time", type: "datetime-local" },
+                { label: "End Time (IST)", key: "end_time", type: "datetime-local" },
+                { label: "Target MW", key: "target_mw", type: "number" },
+              ].map(f => (
+                <div key={f.key} style={{ marginBottom: 8 }}>
+                  <label style={{ fontSize: 11, color: "var(--text-muted)", display: "block", marginBottom: 2 }}>{f.label}</label>
+                  {f.type === "select" ? (
+                    <select style={inp} value={eventForm[f.key]} onChange={e => setEventForm(p => ({ ...p, [f.key]: e.target.value }))}>
+                      {f.options.map(o => <option key={o}>{o}</option>)}
+                    </select>
+                  ) : (
+                    <input style={inp} type={f.type} step={f.type==="number"?"0.1":undefined} value={eventForm[f.key]} onChange={e => setEventForm(p => ({ ...p, [f.key]: f.type==="number"?+e.target.value:e.target.value }))} />
+                  )}
+                </div>
+              ))}
+              <div style={{ marginBottom: 8 }}>
+                <label style={{ fontSize: 11, color: "var(--text-muted)", display: "block", marginBottom: 4 }}>Notification Channels</label>
+                <div style={{ display: "flex", gap: 12 }}>
+                  {["email","sms"].map(ch => (
+                    <label key={ch} style={{ fontSize: 12, cursor: "pointer", display: "flex", alignItems: "center", gap: 4 }}>
+                      <input type="checkbox" checked={eventForm.channels.includes(ch)} onChange={e => setEventForm(p => ({ ...p, channels: e.target.checked ? [...p.channels,ch] : p.channels.filter(c=>c!==ch) }))} />
+                      {ch === "email" ? "📧 Email" : "📱 SMS"}
+                    </label>
+                  ))}
+                </div>
+              </div>
+              <button style={{ width: "100%", padding: "8px", background: "rgba(99,102,241,0.15)", border: "1px solid rgba(99,102,241,0.4)", color: "var(--accent)", borderRadius: 6, cursor: "pointer", fontWeight: 600, fontSize: 12, marginTop: 4 }}>
+                📤 Publish Event & Send Notifications
+              </button>
+            </div>
           </div>
         </div>
+      )}
 
-        <div className="card">
-          <div className="card-title">📅 Weekly Dispatch Schedule</div>
-          <table>
-            <thead><tr><th>Day</th><th>Time</th><th>Type</th><th>Feeder</th><th>kW</th><th>Dur.</th><th>Status</th></tr></thead>
-            <tbody>
-              {schedule.map(s => (
-                <tr key={s.id}>
-                  <td style={{ fontWeight: 600 }}>{s.day}</td>
-                  <td>{s.time}</td>
-                  <td style={{ fontSize: 10 }}>{s.type}</td>
-                  <td>{s.feeder}</td>
-                  <td>{s.kw}</td>
-                  <td>{s.duration}m</td>
-                  <td><Badge status={s.status} /></td>
-                </tr>
+      {/* TAB 3: Manual Dispatch */}
+      {activeTab === "dispatch" && (
+        <div className="row row-2">
+          <div className="card">
+            <div className="card-title">⚡ Manual DR Dispatch (IEEE 2030.5)</div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 10 }}>
+              {[{label:"Target kW",key:"target_kw"},{label:"Duration (min)",key:"duration_min"}].map(f => (
+                <div key={f.key}>
+                  <label style={{ fontSize: 11, color: "var(--text-muted)", display: "block", marginBottom: 2 }}>{f.label}</label>
+                  <input type="number" value={drForm[f.key]} onChange={e => setDrForm({...drForm,[f.key]:+e.target.value})} style={{ ...inp }} />
+                </div>
               ))}
-              {schedule.length === 0 && <tr><td colSpan={7} style={{ textAlign: "center", color: "var(--text-muted)" }}>No scheduled events</td></tr>}
-            </tbody>
-          </table>
-
-          {controls.length > 0 && (
-            <div style={{ marginTop: 16 }}>
-              <div className="card-title">🎛️ Active DERControls (IEEE 2030.5)</div>
+              <div>
+                <label style={{ fontSize: 11, color: "var(--text-muted)", display: "block", marginBottom: 2 }}>Feeder</label>
+                <select value={drForm.feeder_id} onChange={e => setDrForm({...drForm,feeder_id:e.target.value})} style={inp}>
+                  <option value="">All Feeders</option>
+                  {["FDR-01","FDR-02","LK1"].map(f => <option key={f}>{f}</option>)}
+                </select>
+              </div>
+              <div>
+                <label style={{ fontSize: 11, color: "var(--text-muted)", display: "block", marginBottom: 2 }}>Reason</label>
+                <select value={drForm.reason} onChange={e => setDrForm({...drForm,reason:e.target.value})} style={inp}>
+                  {["Peak Shaving","Voltage Regulation","Frequency Response","Grid Congestion","Manual Override"].map(r => <option key={r}>{r}</option>)}
+                </select>
+              </div>
+            </div>
+            <button onClick={submitDR} style={{ background: "var(--purple)", color: "#fff", border: "none", padding: "10px", borderRadius: 6, cursor: "pointer", fontWeight: 600, fontSize: 13, width: "100%" }}>
+              ⚡ Dispatch via IEEE 2030.5 DERControl
+            </button>
+            {drResult && (
+              <div style={{ marginTop: 10, background: "var(--bg)", borderRadius: 6, padding: 10, fontSize: 12 }}>
+                {drResult.error ? <span style={{ color: "var(--danger)" }}>❌ {drResult.error}</span>
+                  : <div><div style={{ color: "var(--success)", fontWeight: 600 }}>✅ {drResult.event_id} — {drResult.dispatched_kw} kW dispatched</div></div>}
+              </div>
+            )}
+          </div>
+          <div className="card">
+            <div className="card-title">🎛️ Active DERControls (IEEE 2030.5)</div>
+            {controls.length === 0 ? (
+              <div style={{ textAlign: "center", padding: "32px 16px", color: "var(--success)" }}>
+                <div style={{ fontSize: 24, marginBottom: 8 }}>✅</div>
+                <div style={{ fontWeight: 600 }}>No active controls</div>
+                <div style={{ fontSize: 11, color: "var(--text-muted)" }}>All DERs operating normally</div>
+              </div>
+            ) : (
               <table>
-                <thead><tr><th>Control ID</th><th>Target W</th><th>Duration</th><th>Description</th></tr></thead>
+                <thead><tr><th>Control ID</th><th>Target</th><th>Duration</th><th>Description</th></tr></thead>
                 <tbody>
                   {controls.map(c => (
                     <tr key={c.mRID}>
@@ -1250,10 +1900,10 @@ function SchedulingScreen({ ders }) {
                   ))}
                 </tbody>
               </table>
-            </div>
-          )}
+            )}
+          </div>
         </div>
-      </div>
+      )}
     </div>
   );
 }
@@ -1857,7 +2507,8 @@ function ConsumerEnrollmentPanel({ consumers, onRefresh }) {
 
 // ─── Demand Response Screen ───────────────────────────────────────────────────
 
-function DemandResponseScreen({ ders, summary }) {
+function DemandResponseScreen({ ders, summary, area }) {
+  const isNoida = area === "noida";
   const [drEvents, setDrEvents] = useState([]);
   const [controls, setControls] = useState([]);
   const [drForm, setDrForm] = useState({ target_kw: 50, duration_min: 60, feeder_id: "", reason: "Peak Shaving" });
@@ -1926,29 +2577,47 @@ function DemandResponseScreen({ ders, summary }) {
     { name: "Scheduled DR",       trigger: "PUVVNL / SLDC day-ahead schedule",   response: "Pre-charge BESS, schedule curtailment", target: "Per schedule block",   duration: "Per schedule", protocol: "OpenADR 2.0b" },
   ];
 
-  const tabs = [
-    ["demand",    "📊 Demand Analysis"],
-    ["dispatch",  "⚡ Dispatch"],
-    ["consumers", "👥 Consumer Enrollment"],
-    ["cba",       "💰 Cost-Benefit"],
-    ["cbl",       "📉 CBL Engine"],
-    ["invitations","📨 Invitations"],
-    ["mvs",       "✅ MV&S"],
-    ["live_monitor","🔴 Live Monitor"],
-    ["sldc",      "📅 SLDC Schedule"],
-    ["lifecycle", "🔄 Lifecycle"],
-    ["history",   "📋 Event History"],
-    ["programme", "📜 DR Programme"],
+  const allTabs = [
+    ["demand",      "📊 Demand Analysis",     ["varanasi","noida"]],
+    ["consumers",   "👥 Consumers",           ["varanasi","noida"]],
+    ["invitations", "📨 Invitations",         ["varanasi","noida"]],
+    ["cbl",         "📉 CBL Engine",          ["varanasi","noida"]],
+    ["live_monitor","🔴 Live Monitor",        ["varanasi","noida"]],
+    ["mvs",         "✅ MV&S",               ["varanasi","noida"]],
+    ["history",     "📋 Event History",       ["varanasi","noida"]],
+    ["programme",   "📜 DR Programme",        ["varanasi","noida"]],
+    ["dispatch",    "⚡ BESS Dispatch",       ["varanasi"]],
+    ["cba",         "💰 Cost-Benefit",        ["varanasi"]],
+    ["sldc",        "📅 SLDC Schedule",       ["varanasi"]],
+    ["lifecycle",   "🔄 Lifecycle",           ["varanasi"]],
   ];
+  const tabs = allTabs.filter(([,, areas]) => areas.includes(area || "varanasi"));
 
   return (
     <div>
-      <div className="kpi-grid" style={{ gridTemplateColumns: "repeat(5,1fr)" }}>
+      {/* Noida area context banner */}
+      {isNoida && (
+        <div style={{ background: "rgba(99,102,241,0.08)", border: "1px solid rgba(99,102,241,0.25)", borderRadius: 8, padding: "10px 16px", marginBottom: 12, display: "flex", alignItems: "center", gap: 12 }}>
+          <span style={{ fontSize: 18 }}>🏙</span>
+          <div>
+            <div style={{ fontWeight: 700, color: "var(--accent)", fontSize: 13 }}>PVVNL Noida — Demand Response Management</div>
+            <div style={{ fontSize: 11, color: "var(--text-muted)" }}>C&I consumer curtailment · Measurement & Verification · Incentive tracking</div>
+          </div>
+        </div>
+      )}
+
+      <div className="kpi-grid" style={{ gridTemplateColumns: `repeat(${isNoida ? 4 : 5},1fr)` }}>
         <KpiCard label="Active DR Events"   value={activeEvents.length}            sub={activeEvents.length ? "In progress now" : "No active events"} color={activeEvents.length ? "var(--warning)" : "var(--success)"} icon="📉" />
-        <KpiCard label="kW Dispatched"      value={totalDispatchedKw.toFixed(1)}   sub="Via active DR events"      color="var(--purple)" icon="⚡" />
-        <KpiCard label="BESS Available"     value={totalAvailKw.toFixed(1)+"kW"}   sub={`${bess.length} storage units`} color="var(--success)" icon="🔋" />
-        <KpiCard label="Enrolled Consumers" value={consumers?.enrolled_count || 0} sub={`of ${consumers?.total_consumers || 0} registered`} color="var(--cyan)" icon="👥" />
+        <KpiCard label="Enrolled Consumers" value={consumers?.enrolled_count || 0} sub={`of ${consumers?.total_consumers || 0} C&I consumers`} color="var(--cyan)" icon="👥" />
         <KpiCard label="Total DR Savings"   value={"₹"+(consumers?.total_savings_inr || 0).toLocaleString()} sub="Incentives paid to consumers" color="var(--solar)" icon="💰" />
+        {isNoida ? (
+          <KpiCard label="kW Curtailed Today" value={totalDispatchedKw.toFixed(1)} unit="kW" sub="Via active DR events" color="var(--purple)" icon="⚡" />
+        ) : (
+          <>
+            <KpiCard label="kW Dispatched"  value={totalDispatchedKw.toFixed(1)}   sub="Via active DR events"      color="var(--purple)" icon="⚡" />
+            <KpiCard label="BESS Available" value={totalAvailKw.toFixed(1)+"kW"}   sub={`${bess.length} storage units`} color="var(--success)" icon="🔋" />
+          </>
+        )}
       </div>
 
       <div className="tabs">
@@ -3003,7 +3672,8 @@ function LifecycleTab({ events }) {
 
 // ─── Alerts Screen (Module 7) ─────────────────────────────────────────────────
 
-function AlertsScreen() {
+function AlertsScreen({ area }) {
+  const isNoida = area === "noida";
   const [alerts, setAlerts] = useState([]);
   const [filter, setFilter] = useState("ALL");  // ALL | OPEN | ACKNOWLEDGED | RESOLVED
   const [priorityFilter, setPriorityFilter] = useState("ALL");
@@ -3038,13 +3708,6 @@ function AlertsScreen() {
     setActing(null);
   };
 
-  const filtered = alerts.filter(a => {
-    const state = a.state || (a.resolved ? "RESOLVED" : "OPEN");
-    const matchState = filter === "ALL" || state === filter;
-    const matchPriority = priorityFilter === "ALL" || a.priority === priorityFilter;
-    return matchState && matchPriority;
-  });
-
   const counts = {
     OPEN: alerts.filter(a => (a.state||"OPEN") === "OPEN" && !a.resolved).length,
     ACKNOWLEDGED: alerts.filter(a => (a.state||"OPEN") === "ACKNOWLEDGED").length,
@@ -3054,13 +3717,29 @@ function AlertsScreen() {
   const alertTypeIcon = t => t === "critical" ? "🔴" : t === "warning" ? "🟡" : "🔵";
   const stateColor = s => s === "OPEN" ? "var(--danger)" : s === "ACKNOWLEDGED" ? "var(--warning)" : "var(--success)";
 
+  // For Noida: only show DR-related alerts (filter by source type)
+  const displayAlerts = isNoida
+    ? alerts.filter(a => !a.source || ["DR","Demand Response","Consumer","M&V"].includes(a.source))
+    : alerts;
+  const filteredDisplay = displayAlerts.filter(a => {
+    const state = a.state || (a.resolved ? "RESOLVED" : "OPEN");
+    const matchState = filter === "ALL" || state === filter;
+    const matchPriority = priorityFilter === "ALL" || a.priority === priorityFilter;
+    return matchState && matchPriority;
+  });
+
   return (
     <div>
+      {isNoida && (
+        <div style={{ background: "rgba(99,102,241,0.08)", border: "1px solid rgba(99,102,241,0.25)", borderRadius: 8, padding: "8px 16px", marginBottom: 12, fontSize: 12, color: "var(--accent)" }}>
+          🏙 Showing DR-related alarms only · PVVNL Noida area
+        </div>
+      )}
       <div className="kpi-grid" style={{ gridTemplateColumns: "repeat(4,1fr)" }}>
         <KpiCard label="Open" value={counts.OPEN} color="var(--danger)" icon="🔔" sub="Requires attention" />
         <KpiCard label="Acknowledged" value={counts.ACKNOWLEDGED} color="var(--warning)" icon="👁️" sub="Under review" />
         <KpiCard label="Resolved" value={counts.RESOLVED} color="var(--success)" icon="✅" sub="Closed" />
-        <KpiCard label="Total Alerts" value={alerts.length} color="var(--cyan)" icon="📋" sub="All time (session)" />
+        <KpiCard label="Total Alerts" value={displayAlerts.length} color="var(--cyan)" icon="📋" sub="All time (session)" />
       </div>
 
       <div style={{ display: "flex", gap: 10, marginBottom: 14, flexWrap: "wrap", alignItems: "center" }}>
@@ -3093,12 +3772,12 @@ function AlertsScreen() {
             </tr>
           </thead>
           <tbody>
-            {filtered.length === 0 && (
+            {filteredDisplay.length === 0 && (
               <tr><td colSpan={10} style={{ textAlign: "center", color: "var(--text-muted)", padding: 24 }}>
                 No alerts match filter. {alerts.length === 0 && <span>Click "+ Seed Demo Alerts" to add sample alerts.</span>}
               </td></tr>
             )}
-            {filtered.map(a => {
+            {filteredDisplay.map(a => {
               const state = a.state || (a.resolved ? "RESOLVED" : "OPEN");
               return (
                 <tr key={a.id} style={{ opacity: state === "RESOLVED" ? 0.6 : 1 }}>
@@ -3189,7 +3868,8 @@ function AlertsScreen() {
 
 // ─── Programs Screen (Module C) ──────────────────────────────────────────────
 
-function ProgramsScreen() {
+function ProgramsScreen({ area }) {
+  const isNoida = area === "noida";
   const { useState, useEffect } = React;
   const [programs, setPrograms] = useState([]);
   const [selected, setSelected] = useState(null);
@@ -3271,13 +3951,19 @@ function ProgramsScreen() {
 
         {counterparty && (
           <div style={{ display: "grid", gridTemplateColumns: "repeat(5,1fr)", gap: 10, marginBottom: 16 }}>
-            {[
+            {(isNoida ? [
+              ["C&I Consumers", counterparty.enrolled_count, "var(--cyan)"],
+              ["Registered", counterparty.registered_count, "var(--success)"],
+              ["Total Load (MD)", `${counterparty.total_capacity_kWp} kVA`, "var(--warning)"],
+              ["Last DR Reduction", `${counterparty.total_gen_kW} kW`, "var(--accent)"],
+              ["Today's Savings", `${counterparty.today_gen_kWh} kWh`, "var(--solar)"],
+            ] : [
               ["Total Capacity", `${counterparty.total_capacity_kWp} kWp`, "var(--solar)"],
               ["Current Gen", `${counterparty.total_gen_kW} kW`, "var(--success)"],
               ["Today's Gen", `${counterparty.today_gen_kWh} kWh`, "var(--cyan)"],
               ["Enrolled", counterparty.enrolled_count, "var(--text)"],
               ["Registered", counterparty.registered_count, "var(--success)"],
-            ].map(([label, val, color]) => (
+            ]).map(([label, val, color]) => (
               <div key={label} style={{ background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: 8, padding: "12px 14px" }}>
                 <div style={{ fontSize: 10, color: "var(--text-muted)", textTransform: "uppercase" }}>{label}</div>
                 <div style={{ fontSize: 22, fontWeight: 700, color, marginTop: 4 }}>{val}</div>
@@ -3287,7 +3973,7 @@ function ProgramsScreen() {
         )}
 
         <div className="tab-bar" style={{ marginBottom: 14 }}>
-          {[["counterparty","📊 Counterparty"],["prosumers","👥 Prosumers"]].map(([id, label]) => (
+          {[["counterparty", isNoida ? "📊 DR Pool" : "📊 Counterparty"], ["prosumers", isNoida ? "👥 C&I Consumers" : "👥 Prosumers"]].map(([id, label]) => (
             <div key={id} className={`tab ${tab === id ? "active" : ""}`} onClick={() => setTab(id)}>{label}</div>
           ))}
         </div>
@@ -3295,13 +3981,13 @@ function ProgramsScreen() {
         {tab === "counterparty" && counterparty && (
           <div>
             <div className="card">
-              <div className="card-title">📈 30-Day Generation — Counterparty Aggregate (kWh/day)</div>
+              <div className="card-title">{isNoida ? "📈 30-Day DR Reduction — Pool Aggregate (kWh/day)" : "📈 30-Day Generation — Counterparty Aggregate (kWh/day)"}</div>
               <BarChart30d data={counterparty.gen_30d} />
             </div>
             <div className="card" style={{ marginTop: 12 }}>
-              <div className="card-title">🏗️ DT Breakdown</div>
+              <div className="card-title">{isNoida ? "🏙️ Zone Breakdown" : "🏗️ DT Breakdown"}</div>
               <table>
-                <thead><tr><th>DT ID</th><th>DERs</th><th>Capacity (kWp)</th><th>Current Gen (kW)</th></tr></thead>
+                <thead><tr><th>{isNoida ? "Zone / Feeder" : "DT ID"}</th><th>{isNoida ? "Consumers" : "DERs"}</th><th>{isNoida ? "Contracted MD (kVA)" : "Capacity (kWp)"}</th><th>{isNoida ? "Last DR (kW)" : "Current Gen (kW)"}</th></tr></thead>
                 <tbody>
                   {counterparty.dt_breakdown.map(dt => (
                     <tr key={dt.dt_id}>
@@ -3315,11 +4001,13 @@ function ProgramsScreen() {
               </table>
             </div>
             <div className="card" style={{ marginTop: 12, borderColor: "var(--border)", fontSize: 12 }}>
-              <div className="card-title">ℹ️ Counterparty Model (Phase 1)</div>
+              <div className="card-title">ℹ️ {isNoida ? "DR Program Model (Phase 1)" : "Counterparty Model (Phase 1)"}</div>
               <div style={{ color: "var(--text-muted)", lineHeight: 1.8 }}>
-                All prosumers in <strong style={{ color: "var(--text)" }}>{counterparty.counterparty_name}</strong> are reported as a single counterparty entity.
-                This is an internal operational grouping (Option C per PRD). No VPP regulatory registration, no SLDC participation, no market standing in Phase 1.
-                Incentive type is <strong style={{ color: "var(--accent)" }}>ADVISORY</strong> — locked for Phase 1.
+                {isNoida
+                  ? <>All C&amp;I consumers enrolled in <strong style={{ color: "var(--text)" }}>{counterparty.counterparty_name}</strong> participate as a single DR pool. Baseline (CBL) computed per CERC methodology. No market standing or SLDC participation in Phase 1.</>
+                  : <>All prosumers in <strong style={{ color: "var(--text)" }}>{counterparty.counterparty_name}</strong> are reported as a single counterparty entity. This is an internal operational grouping (Option C per PRD). No VPP regulatory registration, no SLDC participation, no market standing in Phase 1.</>
+                }
+                &nbsp;Incentive type is <strong style={{ color: "var(--accent)" }}>ADVISORY</strong> — locked for Phase 1.
               </div>
             </div>
           </div>
@@ -3328,11 +4016,11 @@ function ProgramsScreen() {
         {tab === "prosumers" && (
           <div>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
-              <div style={{ fontSize: 12, color: "var(--text-muted)" }}>{prosumers.length} enrolled prosumers</div>
+              <div style={{ fontSize: 12, color: "var(--text-muted)" }}>{prosumers.length} enrolled {isNoida ? "C&I consumers" : "prosumers"}</div>
               <div style={{ display: "flex", gap: 8 }}>
                 <button onClick={async () => { await fetch(`/api/programs/${selected.program_id}/prosumers/seed-demo`, { method: "POST" }); const pr = await apiFetch(`/api/programs/${selected.program_id}/prosumers`); if (pr) setProsumers(pr.enrollments || []); }}
                   style={{ background: "var(--secondary)", border: "none", color: "#fff", borderRadius: 6, padding: "6px 14px", cursor: "pointer", fontSize: 12 }}>
-                  + Seed LK1 DERs
+                  {isNoida ? "+ Seed Noida C&I" : "+ Seed LK1 DERs"}
                 </button>
               </div>
             </div>
@@ -3355,7 +4043,7 @@ function ProgramsScreen() {
                       </tr>
                     );
                   })}
-                  {prosumers.length === 0 && <tr><td colSpan={8} style={{ textAlign: "center", padding: 24, color: "var(--text-muted)" }}>No prosumers enrolled. Click "Seed LK1 DERs" to add demo data.</td></tr>}
+                  {prosumers.length === 0 && <tr><td colSpan={8} style={{ textAlign: "center", padding: 24, color: "var(--text-muted)" }}>No {isNoida ? "C&I consumers" : "prosumers"} enrolled. Click "{isNoida ? "Seed Noida C&I" : "Seed LK1 DERs"}" to add demo data.</td></tr>}
                 </tbody>
               </table>
             </div>
@@ -3369,11 +4057,17 @@ function ProgramsScreen() {
     <div className="screen" style={{ overflowY: "auto" }}>
       <div className="screen-header" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
         <div>
-          <div className="screen-title">📋 DERMS Programs</div>
-          <div className="screen-sub">Manage programs, enrol prosumers, track counterparty performance</div>
+          <div className="screen-title">{isNoida ? "📋 DR Programs" : "📋 DERMS Programs"}</div>
+          <div className="screen-sub">{isNoida ? "Manage demand response programs and enrolment for PVVNL Noida C&I consumers" : "Manage programs, enrol prosumers, track counterparty performance"}</div>
         </div>
         <button onClick={() => setShowCreate(true)} style={{ background: "var(--accent)", border: "none", color: "#000", borderRadius: 7, padding: "8px 18px", cursor: "pointer", fontWeight: 700, fontSize: 13 }}>+ New Program</button>
       </div>
+      {isNoida && (
+        <div style={{ background: "rgba(99,102,241,0.08)", border: "1px solid rgba(99,102,241,0.3)", borderRadius: 8, padding: "10px 16px", marginBottom: 16, display: "flex", alignItems: "center", gap: 10 }}>
+          <span style={{ fontSize: 16 }}>🏙</span>
+          <span style={{ fontSize: 13, color: "var(--text-muted)" }}><strong style={{ color: "var(--text)" }}>PVVNL Noida</strong> — Demand Response Management &nbsp;·&nbsp; Programs shown are DR programs for C&amp;I consumers in the Noida jurisdiction.</span>
+        </div>
+      )}
 
       <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 10, marginBottom: 20 }}>
         {[
@@ -3419,10 +4113,10 @@ function ProgramsScreen() {
           <div style={{ background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: 12, padding: 28, width: 480 }}>
             <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 18 }}>Create New Program</div>
             {[
-              ["Program Name", "program_name", "text", "e.g. Varanasi Voltage Pilot 2026"],
+              ["Program Name", "program_name", "text", isNoida ? "e.g. Noida C&I Peak Shaving 2026" : "e.g. Varanasi Voltage Pilot 2026"],
               ["Description", "program_description", "text", "Programme objective"],
-              ["Feeder Scope (comma-sep)", "feeder_scope", "text", "e.g. LK1, LK2"],
-              ["Counterparty Name", "counterparty_name", "text", "e.g. PuVVNL DER Pool 2026"],
+              [isNoida ? "Area / Zone" : "Feeder Scope (comma-sep)", "feeder_scope", "text", isNoida ? "e.g. Noida Sector 18, Sector 62" : "e.g. LK1, LK2"],
+              ["Counterparty Name", "counterparty_name", "text", isNoida ? "e.g. PVVNL Noida C&I Pool 2026" : "e.g. PuVVNL DER Pool 2026"],
               ["Start Date", "start_date", "date", ""],
               ["End Date", "end_date", "date", ""],
             ].map(([label, key, type, ph]) => (
@@ -4665,8 +5359,9 @@ function SandboxTab() {
 
 // ── Login ─────────────────────────────────────────────────────────────────────
 const DERMS_CREDS = [
-  { user: "derms_admin", pass: "derms@123", role: "Admin" },
-  { user: "operator",    pass: "op@123",    role: "Operator" },
+  { user: "derms_admin",  pass: "derms@123", role: "Admin",    area: "varanasi", label: "PuVVNL Varanasi" },
+  { user: "operator",     pass: "op@123",    role: "Operator", area: "varanasi", label: "PuVVNL Varanasi" },
+  { user: "noida_dr",     pass: "noida@123", role: "DR Operator", area: "noida", label: "PVVNL Noida" },
 ];
 
 function LoginScreen({ onLogin }) {
@@ -4680,7 +5375,7 @@ function LoginScreen({ onLogin }) {
     setTimeout(() => {
       const match = DERMS_CREDS.find(c => c.user === user.trim() && c.pass === pass);
       if (match) {
-        onLogin(match.user, match.role);
+        onLogin(match.user, match.role, match.area, match.label);
       } else {
         setError("Invalid credentials. Use the demo credentials shown below.");
         setBusy(false);
@@ -4694,11 +5389,13 @@ function LoginScreen({ onLogin }) {
         <div className="login-logo">
           <div className="login-logo-icon">⚡</div>
           <div className="login-logo-title">Neural Grid Platform</div>
-          <div className="login-logo-sub">L&amp;T DERMS · PuVVNL Varanasi Pilot</div>
+          <div className="login-logo-sub">L&amp;T DERMS · Demand Response Management</div>
         </div>
-        <div className="login-demo">
-          <div>Demo: <b>derms_admin</b> / <b>derms@123</b></div>
-          <div style={{marginTop:3}}>or: <b>operator</b> / <b>op@123</b></div>
+        <div className="login-demo" style={{ fontSize: 11 }}>
+          <div style={{ fontWeight: 600, color: "var(--text-muted)", marginBottom: 4, textTransform: "uppercase", letterSpacing: "0.04em" }}>Demo accounts</div>
+          <div style={{ marginBottom: 2 }}>🏙 Varanasi DERMS admin: <b>derms_admin</b> / <b>derms@123</b></div>
+          <div style={{ marginBottom: 2 }}>🏙 Varanasi operator: <b>operator</b> / <b>op@123</b></div>
+          <div>🏙 Noida DR operator: <b>noida_dr</b> / <b>noida@123</b></div>
         </div>
         <label className="login-label">Username</label>
         <input className="login-input" value={user} autoFocus
@@ -4709,7 +5406,7 @@ function LoginScreen({ onLogin }) {
           onChange={e => setPass(e.target.value)}
           onKeyDown={e => e.key === "Enter" && handleLogin()}/>
         <button className="login-btn" onClick={handleLogin} disabled={busy}>
-          {busy ? "Signing in…" : "Sign in to DERMS"}
+          {busy ? "Signing in…" : "Sign In"}
         </button>
         {error && <div className="login-error">{error}</div>}
         <div className="login-footer">
@@ -4722,8 +5419,9 @@ function LoginScreen({ onLogin }) {
 }
 
 function App() {
-  const [auth, setAuth]   = useState(null);   // { user, role }
-  const [screen, setScreen] = useState("dashboard");
+  const [auth, setAuth]   = useState(null);   // { user, role, area, label }
+  const isNoida = auth?.area === "noida";
+  const [screen, setScreen] = useState(null);  // null until auth determines default
   const [summary, setSummary] = useState(null);
   const [genProfile, setGenProfile] = useState(null);
   const [ders, setDers] = useState([]);
@@ -4773,31 +5471,51 @@ function App() {
     return () => clearInterval(iv);
   }, []);
 
-  const navItems = [
-    { id: "dashboard",       icon: "📊", label: "Dashboard" },
-    { id: "programs",        icon: "📋", label: "Programs" },
-    { id: "fleet",            icon: "⚡", label: "DER Asset Registry" },
-    { id: "integrations",    icon: "🔌", label: "Integrations" },
-    { id: "planning",        icon: "🗺️", label: "Planning & HC" },
-    { id: "alerts",          icon: "🔔", label: "Monitoring & Alerts" },
-    { id: "demand-response", icon: "📉", label: "Demand Response" },
-    { id: "oe-monitor",      icon: "🔁", label: "OE Monitor (Ph.2)" },
-    { id: "analytics",       icon: "🤖", label: "Analytics & Reports" },
-    { id: "__prosumer__",    icon: "🏠", label: "Prosumer Portal ↗" },
+  const allNavItems = [
+    { id: "dashboard",       icon: "📊", label: "Overview",          areas: ["varanasi"] },
+    { id: "fleet",           icon: "⚡", label: "DER Fleet",         areas: ["varanasi"] },
+    { id: "network",         icon: "🏗️", label: "Network",           areas: ["varanasi"] },
+    { id: "planning",        icon: "🗺️", label: "Hosting Capacity",  areas: ["varanasi"] },
+    { id: "scheduling",      icon: "📅", label: "Scheduling",        areas: ["varanasi"] },
+    { id: "analytics",       icon: "📈", label: "Analytics",         areas: ["varanasi"] },
+    { id: "demand-response", icon: "📉", label: "Demand Response",   areas: ["varanasi", "noida"] },
+    { id: "programs",        icon: "📋", label: "Programs",          areas: ["varanasi", "noida"] },
+    { id: "integrations",    icon: "🔌", label: "Integrations",      areas: ["varanasi"] },
+    { id: "oe-monitor",      icon: "🔁", label: "OE Monitor",        areas: ["varanasi"] },
+    { id: "alerts",          icon: "🔔", label: "Alarms",            areas: ["varanasi", "noida"] },
+    { id: "settings",        icon: "⚙️", label: "Settings",          areas: ["varanasi"] },
+    { id: "__prosumer__",    icon: "🏠", label: "Prosumer Portal ↗", areas: ["varanasi"] },
   ];
+  const navItems = allNavItems.filter(n => n.areas.includes(auth?.area || "varanasi"));
 
-  if (!auth) return <LoginScreen onLogin={(user, role) => setAuth({ user, role })} />;
+  if (!auth) return <LoginScreen onLogin={(user, role, area, label) => {
+    setAuth({ user, role, area, label });
+    setScreen(area === "noida" ? "demand-response" : "dashboard");
+  }} />;
+
+  const activeScreen = screen || (isNoida ? "demand-response" : "dashboard");
 
   return (
     <div className="app">
       <div className="sidebar">
         <div className="sidebar-logo">
           <div className="logo-text">⚡ Neural Grid</div>
-          <div className="logo-sub">L&amp;T DERMS · PuVVNL Varanasi</div>
+          <div className="logo-sub">
+            {isNoida ? "L&T DR Platform · PVVNL Noida" : "L&T DERMS · PuVVNL Varanasi"}
+          </div>
         </div>
+
+        {/* Noida area badge */}
+        {isNoida && (
+          <div style={{ margin: "0 12px 10px", padding: "6px 10px", background: "rgba(99,102,241,0.12)", border: "1px solid rgba(99,102,241,0.3)", borderRadius: 6, fontSize: 11 }}>
+            <div style={{ fontWeight: 700, color: "var(--accent)" }}>🏙 Noida — DR Only</div>
+            <div style={{ color: "var(--text-muted)", marginTop: 2 }}>PVVNL · Demand Response</div>
+          </div>
+        )}
+
         <div className="nav">
           {navItems.map(n => (
-            <div key={n.id} className={`nav-item ${screen === n.id ? "active" : ""}`} onClick={() => {
+            <div key={n.id} className={`nav-item ${activeScreen === n.id ? "active" : ""}`} onClick={() => {
               if (n.id === "__prosumer__") window.open("/prosumer", "_blank");
               else setScreen(n.id);
             }} style={n.id==="__prosumer__"?{marginTop:8,borderTop:"1px solid var(--border)",paddingTop:14}:{}}>
@@ -4805,22 +5523,26 @@ function App() {
               <span>{n.label}</span>
               {n.id === "alerts" && alertCount > 0 && <span className="nav-badge">{alertCount}</span>}
               {n.id === "demand-response" && drActiveCount > 0 && <span className="nav-badge">{drActiveCount}</span>}
+              {n.id === "fleet" && (summary?.distribution_transformers || []).filter(d => d.pending_approvals > 0).length > 0 && <span className="nav-badge">!</span>}
             </div>
           ))}
         </div>
         <div className="sidebar-footer">
           <div><span className="status-dot"></span>{connected ? "Live" : "Connecting..."}</div>
           {lastUpdate && <div style={{ marginTop: 2 }}>Updated: {lastUpdate}</div>}
-          <div style={{ marginTop: 6, fontSize: 10 }}>
-            <div>GE ADMS: CIM / IEC 61970</div>
-            <div>Aggregators: IEEE 2030.5</div>
-          </div>
+          {!isNoida && (
+            <div style={{ marginTop: 6, fontSize: 10 }}>
+              <div>GE ADMS: CIM / IEC 61970</div>
+              <div>Aggregators: IEEE 2030.5</div>
+            </div>
+          )}
           <div style={{ marginTop: 10, borderTop: "1px solid var(--border)", paddingTop: 10 }}>
             <div style={{ fontSize: 11, marginBottom: 6 }}>
               <span style={{ color: "var(--text)" }}>{auth.user}</span>
               <span style={{ color: "var(--text-muted)" }}> · {auth.role}</span>
+              <div style={{ color: "var(--text-muted)", fontSize: 10, marginTop: 1 }}>{auth.label}</div>
             </div>
-            <button onClick={() => setAuth(null)} style={{ width: "100%", padding: "5px 0", background: "transparent", border: "1px solid var(--border)", color: "var(--text-muted)", borderRadius: 5, cursor: "pointer", fontSize: 11 }}>
+            <button onClick={() => { setAuth(null); setScreen(null); }} style={{ width: "100%", padding: "5px 0", background: "transparent", border: "1px solid var(--border)", color: "var(--text-muted)", borderRadius: 5, cursor: "pointer", fontSize: 11 }}>
               Sign out
             </button>
           </div>
@@ -4831,9 +5553,11 @@ function App() {
         <div className="header">
           <div>
             <div className="header-title">
-              {navItems.find(n => n.id === screen)?.icon} {navItems.find(n => n.id === screen)?.label}
+              {navItems.find(n => n.id === activeScreen)?.icon} {navItems.find(n => n.id === activeScreen)?.label}
             </div>
-            <div className="header-sub">Neural Grid Platform · PuVVNL Varanasi · Phase 1 · {new Date().toLocaleDateString()}</div>
+            <div className="header-sub">
+              Neural Grid Platform · {auth.label} · Phase 1 · {new Date().toLocaleDateString()}
+            </div>
           </div>
           <div className="header-right">
             <div className="badge-pills">
@@ -4841,23 +5565,27 @@ function App() {
                 <span className="status-dot" style={{ width: 6, height: 6, display: "inline-block" }}></span>
                 {connected ? "Live" : "Reconnecting"}
               </div>
-              <div className="pill green">🏭 ADMS: {summary?.adms_sync_status || "—"}</div>
-              <div className="pill green">📡 {ders.length} DERs</div>
+              {!isNoida && <div className="pill green">🏭 ADMS: {summary?.adms_sync_status || "—"}</div>}
+              {!isNoida && <div className="pill green">📡 {ders.length} DERs</div>}
+              {isNoida && <div className="pill" style={{ borderColor: "var(--accent)", color: "var(--accent)" }}>🏙 PVVNL Noida — DR</div>}
               {alertCount > 0 && <div className="pill" style={{ borderColor: "var(--danger)", color: "var(--danger)" }}>🔔 {alertCount} Alerts</div>}
             </div>
           </div>
         </div>
 
         <div className="content">
-          {screen === "dashboard"      && <DashboardScreen summary={summary} genProfile={genProfile} ders={ders} />}
-          {screen === "programs"       && <ProgramsScreen />}
-          {screen === "fleet"          && <DERFleetScreen ders={ders} />}
-          {screen === "integrations"   && <IntegrationScreen />}
-          {screen === "oe-monitor"     && <OEMonitorScreen />}
-          {screen === "planning"       && <PlanningScreen ders={ders} summary={summary} />}
-          {screen === "demand-response" && <DemandResponseScreen ders={ders} summary={summary} />}
-          {screen === "alerts"         && <AlertsScreen />}
-          {screen === "analytics"      && <AnalyticsScreen ders={ders} genProfile={genProfile} />}
+          {activeScreen === "dashboard"       && !isNoida && <DashboardScreen summary={summary} genProfile={genProfile} ders={ders} />}
+          {activeScreen === "fleet"           && !isNoida && <DERFleetScreen ders={ders} summary={summary} />}
+          {activeScreen === "network"         && !isNoida && <NetworkScreen summary={summary} />}
+          {activeScreen === "planning"        && !isNoida && <PlanningScreen ders={ders} summary={summary} />}
+          {activeScreen === "scheduling"      && !isNoida && <SchedulingScreen ders={ders} />}
+          {activeScreen === "analytics"       && !isNoida && <AnalyticsScreen ders={ders} genProfile={genProfile} />}
+          {activeScreen === "demand-response" && <DemandResponseScreen ders={ders} summary={summary} area={auth.area} />}
+          {activeScreen === "programs"        && <ProgramsScreen area={auth.area} />}
+          {activeScreen === "integrations"    && !isNoida && <IntegrationScreen />}
+          {activeScreen === "oe-monitor"      && !isNoida && <OEMonitorScreen />}
+          {activeScreen === "alerts"          && <AlertsScreen area={auth.area} />}
+          {activeScreen === "settings"        && !isNoida && <SettingsScreen />}
         </div>
       </div>
     </div>
